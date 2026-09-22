@@ -1,0 +1,75 @@
+[project]
+name = "finplan"
+version = "0.1.0"
+description = "Система личного финансового учёта: Telegram-бот и веб-интерфейс"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "aiogram>=3,<4",
+    "sqlalchemy[asyncio]>=2,<3",
+    "asyncpg",
+    "alembic",
+    "pydantic>=2,<3",
+    "pydantic-settings",
+    "structlog",
+    "redis",
+    "apscheduler",
+    "httpx",
+    "python-ulid",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+    "coverage[toml]",
+    "hypothesis",
+    "testcontainers[postgres]",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finplan"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "RUF"]
+# Русская проза в докстрингах соседствует с латинскими идентификаторами,
+# поэтому проверка омоглифов даёт ложные срабатывания в каждом файле.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+mypy_path = "src"
+packages = ["finplan"]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["finplan.domain.*", "finplan.application.*"]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: модульные тесты без внешних зависимостей",
+    "integration: тесты против реальной PostgreSQL/Redis в контейнере",
+    "e2e: сквозные сценарии через оба диспетчера",
+]
+
+[tool.coverage.run]
+source = ["src/finplan"]
+
+[tool.coverage.report]
+show_missing = true

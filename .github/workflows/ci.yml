@@ -1,0 +1,84 @@
+# CI: docs/architecture.md, раздел 11.5 «Прочее» — порядок шагов
+# lint -> unit -> integration -> build, каждая job зависит от предыдущей
+# через needs, падение любой останавливает цепочку.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Значения-заглушки раздела 10.1, достаточные для сборки Settings() в
+  # job lint/unit/build; настоящие секреты в workflow не попадают.
+  UV_VERSION: "0.8"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - run: uv python install 3.12
+
+      - run: uv sync --locked
+
+      - run: uv run ruff check
+
+      - run: uv run ruff format --check
+
+      - run: uv run mypy src
+
+  unit:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - run: uv python install 3.12
+
+      - run: uv sync --locked
+
+      - run: uv run pytest -m "not integration"
+
+  # Раздел 11.1 «Пирамида»: интеграционные тесты идут против реальной
+  # PostgreSQL 16, но поднимает её не блок `services:`, а фикстура
+  # `postgres_container` в tests/conftest.py через testcontainers — тот же
+  # путь, что и при локальном запуске. GitHub-раннер ubuntu-latest уже
+  # содержит рабочий Docker-демон, поэтому testcontainers поднимает
+  # контейнер без дополнительной настройки, а отдельный блок `services:`
+  # с postgres/redis тестам не нужен и не используется.
+  integration:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - run: uv python install 3.12
+
+      - run: uv sync --locked
+
+      - run: uv run pytest -m integration
+
+  build:
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build -t finplan:ci .

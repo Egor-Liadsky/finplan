@@ -1,0 +1,78 @@
+# Локальный стек разработки. За основу взят образец docs/architecture.md,
+# раздел 10.3; отличия от образца перечислены и объяснены комментариями
+# на месте, где они появляются.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: finplan
+      POSTGRES_USER: finplan
+      POSTGRES_PASSWORD: finplan
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finplan"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build: .
+    command: ["uvicorn", "finplan.entrypoints.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    env_file: [.env]
+    ports: ["8000:8000"]
+    volumes: ["./src:/app/src"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      # api пока не читает Redis напрямую (раздел 1.2: очередь вебхука и
+      # идемпотентность появятся позже), но зависимость от healthcheck уже
+      # задаётся здесь, чтобы не переписывать блок depends_on, когда
+      # использование Redis в api появится.
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  bot:
+    build: .
+    command: ["python", "-m", "finplan.entrypoints.bot.main"]
+    env_file: [.env]
+    volumes: ["./src:/app/src"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      # bot переключает хранилище FSM на Redis, если REDIS_URL задан
+      # (entrypoints/bot/main.py, раздел 10.1) — без здорового Redis
+      # процесс не должен стартовать раньше него.
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  worker:
+    build: .
+    command: ["python", "-m", "finplan.entrypoints.worker.main"]
+    env_file: [.env]
+    volumes: ["./src:/app/src"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  # Сервис frontend образца раздела 10.3 здесь не включён: каталог
+  # frontend/ появится только на этапе 2 (раздел 13 «Этапы внедрения»), а
+  # сервис docker-compose, ссылающийся на volume несуществующего каталога,
+  # ломает поднятие всего стека командой `docker compose up`.
+
+volumes:
+  pgdata:

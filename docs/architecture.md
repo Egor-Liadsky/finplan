@@ -215,7 +215,12 @@ finplan/
 │   └── workflows/
 │       └── ci.yml                  CI: линтер, тесты, сборка образа
 ├── docs/
-│   └── architecture.md             Этот документ
+│   ├── architecture.md             Этот документ
+│   ├── architecture-brief.md       Выжимка: карта документа и дословные правила
+│   ├── build-brief.py              Сборка выжимки из этого документа
+│   ├── dev-log.md                  Журнал разработки, новые записи сверху
+│   ├── journal/                    Архив вытесненных записей журнала по кварталам
+│   └── tasks/                      Задания субагентам-исполнителям и их результаты
 ├── migrations/
 │   ├── env.py                      Точка входа Alembic, async engine
 │   └── versions/                   Файлы миграций
@@ -2648,7 +2653,8 @@ upgrade head` → запуск новой версии `api`, `bot`, `worker`.
 | `make revision m="..."` | Автогенерация миграции |
 | `make seed` | Демо-данные: пользователь, счета, дерево категорий, вклад |
 | `make test` | Полный прогон pytest |
-| `make lint` | `ruff check`, `ruff format --check`, `mypy` |
+| `make brief` | Пересборка `docs/architecture-brief.md` из этого документа |
+| `make lint` | Сверка выжимки с документом, `ruff check`, `ruff format --check`, `mypy` |
 | `make recalc` | Пересчёт всех кэшей из журнала |
 
 ---

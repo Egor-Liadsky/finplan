@@ -120,7 +120,8 @@ make migrate
 
 `make test` — это `uv run pytest`; `make lint` — `ruff check`,
 `ruff format --check` и `mypy src`. Цели `make seed` и `make recalc`
-объявлены, но пока печатают `not implemented yet: stage 1`.
+объявлены, но пока печатают заглушку: `seed` появится на этапе 2, `recalc` —
+на этапе 3.
 
 Тесты разложены по уровням пирамиды из раздела 11 архитектуры:
 `tests/unit` — чистый Python без внешних зависимостей; `tests/integration`

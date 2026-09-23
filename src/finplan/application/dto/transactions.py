@@ -12,7 +12,11 @@ from uuid import UUID
 from pydantic import Field
 
 from finplan.application.dto.base import Dto
-from finplan.domain.entities.transaction import TransactionKind, TransactionStatus
+from finplan.domain.entities.transaction import (
+    Transaction,
+    TransactionKind,
+    TransactionStatus,
+)
 
 
 class RecordTransactionCommand(Dto):
@@ -46,6 +50,23 @@ class TransactionDTO(Dto):
     comment: str | None
     reverses_id: UUID | None
     created_at: datetime
+
+    @classmethod
+    def from_entity(cls, transaction: Transaction) -> TransactionDTO:
+        """Переводит доменную `Transaction` в DTO."""
+        return cls(
+            id=transaction.id,
+            kind=transaction.kind,
+            status=transaction.status,
+            amount=transaction.amount.amount,
+            currency=transaction.amount.currency.code,
+            account_id=transaction.account_id,
+            category_id=transaction.category_id,
+            occurred_at=transaction.occurred_at,
+            comment=transaction.comment,
+            reverses_id=transaction.reverses_id,
+            created_at=transaction.created_at,
+        )
 
 
 class UndoLastCommand(Dto):

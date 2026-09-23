@@ -11,6 +11,7 @@ from uuid import UUID
 from finplan.application.dto.accounts import AccountDTO
 from finplan.application.dto.base import Dto
 from finplan.domain.entities.account import AccountType
+from finplan.domain.entities.user import User
 
 
 class UserDTO(Dto):
@@ -23,6 +24,19 @@ class UserDTO(Dto):
     base_currency: str
     timezone: str
     locale: str
+
+    @classmethod
+    def from_entity(cls, user: User) -> UserDTO:
+        """Переводит доменного `User` в DTO."""
+        return cls(
+            id=user.id,
+            telegram_id=user.telegram_id,
+            username=user.username,
+            first_name=user.first_name,
+            base_currency=user.base_currency.code,
+            timezone=user.timezone,
+            locale=user.locale,
+        )
 
 
 class RegisterUserCommand(Dto):

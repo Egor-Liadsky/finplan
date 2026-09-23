@@ -8,7 +8,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from finplan.application.dto.base import Dto
-from finplan.domain.entities.category import CategoryKind
+from finplan.domain.entities.category import Category, CategoryKind
 
 
 class CategoryDTO(Dto):
@@ -20,6 +20,18 @@ class CategoryDTO(Dto):
     name: str
     path: str
     depth: int
+
+    @classmethod
+    def from_entity(cls, category: Category) -> CategoryDTO:
+        """Переводит доменную `Category` в DTO."""
+        return cls(
+            id=category.id,
+            parent_id=category.parent_id,
+            kind=category.kind,
+            name=category.name,
+            path=category.path,
+            depth=category.depth,
+        )
 
 
 class ListCategoriesQuery(Dto):

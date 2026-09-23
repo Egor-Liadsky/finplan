@@ -10,7 +10,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from finplan.application.dto.base import Dto
-from finplan.domain.entities.account import AccountType
+from finplan.domain.entities.account import Account, AccountType
 
 
 class AccountDTO(Dto):
@@ -21,6 +21,17 @@ class AccountDTO(Dto):
     type: AccountType
     currency: str
     is_archived: bool
+
+    @classmethod
+    def from_entity(cls, account: Account) -> AccountDTO:
+        """Переводит доменный `Account` в DTO."""
+        return cls(
+            id=account.id,
+            name=account.name,
+            type=account.type,
+            currency=account.currency.code,
+            is_archived=account.is_archived,
+        )
 
 
 class ListAccountsQuery(Dto):

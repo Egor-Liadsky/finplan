@@ -1,4 +1,4 @@
-.PHONY: up migrate revision seed test lint recalc
+.PHONY: up migrate revision seed test lint recalc brief
 
 up:
 	docker compose up -d
@@ -15,7 +15,11 @@ seed:
 test:
 	uv run pytest
 
+brief:
+	python3 docs/build-brief.py
+
 lint:
+	python3 docs/build-brief.py --check
 	uv run ruff check
 	uv run ruff format --check
 	uv run mypy src

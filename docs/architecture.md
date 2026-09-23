@@ -354,7 +354,8 @@ finplan/
 │   ├── conftest.py                 Общие фикстуры: контейнер БД, фабрики данных
 │   ├── unit/
 │   │   ├── finance/                Тесты формул на контрольных примерах
-│   │   └── domain/                 Тесты инвариантов сущностей
+│   │   ├── domain/                 Тесты инвариантов сущностей
+│   │   └── application/            Тесты use case на in-memory реализациях портов
 │   ├── integration/
 │   │   ├── repositories/           Репозитории против реальной PostgreSQL
 │   │   ├── api/                    Эндпоинты через httpx.AsyncClient

@@ -99,4 +99,86 @@
 
 ## Результат исполнителя
 
-_Заполняет исполнитель. Выше этой строки ничего не меняется._
+**Сделано.** Дописаны тесты на пять находок ревью 11a–11d — все пять пунктов
+задания закрыты минимум одним тестом:
+
+1. `occurred_on` при отрицательном смещении от UTC (`America/Los_Angeles`,
+   UTC-7 в сентябре): операция в `2026-09-24 02:30 UTC` получает
+   `occurred_on = 2026-09-23`, дату, ещё текущую по местному времени, —
+   `tests/unit/domain/test_transaction.py:233`,
+   `tests/unit/application/test_record_transaction.py:104`,
+   `tests/integration/repositories/test_transactions.py:181`. Раньше в
+   этих трёх файлах была только проверка положительного смещения
+   (`Europe/Moscow`), которая не поймала бы регрессию в знаке смещения.
+2. Вторая сторнирующая запись с тем же `reverses_id` даёт `DuplicateError`
+   с текстом про повторное сторно, без упоминания `external_key` —
+   `tests/integration/repositories/test_transactions.py:223`.
+3. `kind = interest` со статусом `posted` прибавляется к `account_movements`
+   по своему `account_id`; сторнированная пара (обе строки `status =
+   reversed`) в сумму не входит — `tests/integration/repositories/
+   test_ledger_queries.py:188` и `:219`.
+4. `totals_by_category` суммирует `base_amount`, а не `amount`: операция в
+   USD (`amount = 100.0000`) со снимком в RUB (`base_amount = 9500.0000`)
+   даёт в отчёте `9500.0000` — `tests/integration/repositories/
+   test_ledger_queries.py:422`.
+5. Триггер `trg_transactions_immutable`: `UPDATE` столбца, отличного от
+   `status`, и `DELETE` строки журнала отклоняются PostgreSQL с
+   `SQLSTATE = P0001` (`raise_exception`, код по умолчанию для `RAISE
+   EXCEPTION` без явного `SQLSTATE` в `fn_transactions_guard_immutable`) —
+   `tests/integration/repositories/test_transactions.py:365` и `:396`.
+   Обе проверки идут прямым SQL на `app_connection` под ролью
+   `finplan_app`, каждая — в собственном `begin_nested()` (вложенный
+   `SAVEPOINT`), который откатывается в `finally` после ожидаемой ошибки;
+   `DELETE`-тест дополнительно читает строку через репозиторий после
+   отката и убеждается, что она осталась на месте.
+
+`tests/integration/repositories/conftest.py` менять не потребовалось:
+фикстура `make_transaction` уже принимала `timezone`, `base_amount`,
+`base_currency`, `base_rate` через `**overrides`/именованные параметры.
+
+**Проверка.** `uv run pytest -q` — 219 passed (было 210, добавлено 9
+тестов); `uv run ruff check` — чисто; `uv run mypy src` — чисто;
+`make lint` целиком (включая `docs/build-brief.py --check` и `ruff format
+--check`) — зелёный. Красный прогон подтверждён для пунктов 2 и 3
+критерия приёмки: временный откат `src/finplan/infrastructure/db/queries/
+ledger.py` и `src/finplan/infrastructure/db/repositories/transactions.py`
+к состоянию до коммита `4715da4` (`git checkout 4715da4~1 -- <файлы>`)
+даёт красными ровно `test_second_reversal_of_same_original_raises_
+duplicate_error_about_reversal` (падает с `AssertionError: операция с
+external_key None уже сохранена` вместо ожидаемого текста про сторно) и
+`test_posted_interest_adds_to_account_by_account_id` (падает с `KeyError`
+— счёт не попадает в словарь, `interest` в сумму не учитывается); третий
+новый тест в том же файле, `test_reversed_interest_does_not_add_to_
+account`, при этом откате остаётся зелёным — ожидаемо, потому что оба
+поведения (учитывать и не учитывать `interest`) дают одинаковый результат
+для сторнированной пары, которая не попадает в сумму в любом случае, это
+не пункт 3 критерия приёмки, а отдельная проверка на «не ломает то, что и
+так работало». После проверки `git checkout HEAD -- <файлы>` вернул `src`
+к исходному состоянию; `git diff --stat -- src migrations
+docs/architecture.md docs/dev-log.md` после этого пуст.
+
+**Решения и отложенное.**
+
+- Пункт 4 задания (`totals_by_category` суммирует `base_amount`) —
+  тест на уже корректное поведение, не на дефект: в текущем
+  `SqlAlchemyLedgerQueries.totals_by_category`
+  (`src/finplan/infrastructure/db/queries/ledger.py:92`) `func.sum`
+  и так берёт `TransactionRow.base_amount`, а не `TransactionRow.amount`.
+  Тест написан как контрольный пример раздела 11.2 (операция с
+  `amount != base_amount`, сверка через `Decimal`), а не как `xfail`:
+  граница задания требует `xfail(strict=True)` только для тестов, которые
+  ловят дефект, а этот дефекта не ловит.
+- SQLSTATE `P0001` подтверждён эмпирически прогоном тестов против
+  контейнера PostgreSQL 16 (Docker был доступен в этой сессии), а не
+  предположен по документации — оба теста триггера сначала прошли на
+  текущем коде и только затем строка `assert sqlstate == "P0001"`
+  зафиксирована как ожидание.
+- Для пункта 5 выбраны ровно два минимальных сценария из задания —
+  `UPDATE` постороннего столбца (`comment`) при `status`, не меняющемся с
+  `posted` на `reversed`, и `DELETE`. Переход `status: posted -> pending`
+  или `reversed -> posted` отдельно не проверялся: он покрывается той же
+  веткой `IF OLD.status <> 'posted' OR NEW.status <> 'reversed'` в
+  `fn_transactions_guard_immutable`, что и выбранный сценарий, и не назван
+  в задании отдельно.
+
+**Вопросы диспетчеру.** Нет.

@@ -34,12 +34,19 @@ class SqlAlchemyLedgerQueries:
         Кросс-валютная пара строк `transfer_group_id` из раздела 3.3
         решается на этапе 2 (домен пока не заводит поле `transfer_group_id`
         и не создаёт переводы); здесь один перевод — одна строка, и
-        `transfer_group_id` в запросе не участвует.
+        `transfer_group_id` в запросе не участвует. `adjustment` не
+        учитывается: направление корректировки по 5.7 задаёт поле, которого
+        в журнале пока нет.
         """
         debit = select(
             TransactionRow.account_id.label("account_id"),
             case(
-                (TransactionRow.kind == TransactionKind.INCOME.value, TransactionRow.amount),
+                (
+                    TransactionRow.kind.in_(
+                        (TransactionKind.INCOME.value, TransactionKind.INTEREST.value)
+                    ),
+                    TransactionRow.amount,
+                ),
                 (
                     TransactionRow.kind.in_(
                         (TransactionKind.EXPENSE.value, TransactionKind.TRANSFER.value)
@@ -53,6 +60,7 @@ class SqlAlchemyLedgerQueries:
             TransactionRow.kind.in_(
                 (
                     TransactionKind.INCOME.value,
+                    TransactionKind.INTEREST.value,
                     TransactionKind.EXPENSE.value,
                     TransactionKind.TRANSFER.value,
                 )

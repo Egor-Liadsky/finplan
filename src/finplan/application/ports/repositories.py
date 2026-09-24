@@ -123,7 +123,8 @@ class LedgerQueries(Protocol):
     async def account_movements(self, user_id: UUID) -> Mapping[UUID, Decimal]:
         """Сумма движений по каждому счёту в валюте счёта, без `opening_balance`.
 
-        Доход — со знаком плюс, расход — со знаком минус, перевод — минус по
+        Доход и начисленные проценты (`interest`) — со знаком плюс, расход —
+        со знаком минус, перевод — минус по
         `account_id` и плюс по `counter_account_id`. Счёт без операций в
         словарь не попадает.
         """

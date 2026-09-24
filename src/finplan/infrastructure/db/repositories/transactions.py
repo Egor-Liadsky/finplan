@@ -26,6 +26,7 @@ from finplan.infrastructure.db.models.transactions import Transaction as Transac
 # Код ошибки PostgreSQL `unique_violation` (раздел 12.3), см. пояснение в
 # `repositories/users.py`.
 _UNIQUE_VIOLATION = "23505"
+_UQ_REVERSES_ID = "uq_transactions_reverses_id"
 
 
 class SqlAlchemyTransactionRepository:
@@ -78,6 +79,14 @@ class SqlAlchemyTransactionRepository:
             await self._session.flush()
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == _UNIQUE_VIOLATION:
+                # У `transactions` два уникальных ключа (раздел 4.3); имя
+                # нарушенного отдаёт исключение asyncpg, обёрнутое SQLAlchemy.
+                cause = getattr(exc.orig, "__cause__", None)
+                constraint = getattr(cause, "constraint_name", None)
+                if constraint == _UQ_REVERSES_ID:
+                    raise DuplicateError(
+                        f"операция {transaction.reverses_id} уже сторнирована"
+                    ) from exc
                 raise DuplicateError(
                     f"операция с external_key {transaction.external_key!r} уже сохранена"
                 ) from exc

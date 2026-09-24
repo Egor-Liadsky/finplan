@@ -122,4 +122,91 @@ git diff a9d8719~1..a9d8719 -- tests/unit/application/test_list_accounts.py test
 
 ## Результат исполнителя
 
-_Заполняет исполнитель. Выше этой строки ничего не меняется._
+**Сделано.** Проверены 10 файлов диффа коммита `a9d8719` (1 625 строк):
+`fakes.py`, `conftest.py` и восемь `test_*.py` в `tests/unit/application/`.
+Для контекста прочитаны use case и порты, которые эти тесты покрывают
+(`get_balances.py`, `period_summary.py`, `record_transaction.py`,
+`undo_last.py`, `register_user.py`, `ports/repositories.py`, `ports/uow.py`)
+и домен `Transaction.reverse`. Найдено 3 находки уровня «нарушение», 1 —
+«замечание», находок уровня «к документу» нет.
+
+**Проверка.**
+
+- **Нарушение.** `tests/unit/application/test_record_transaction.py:309` —
+  нет теста на ветку `InvalidCommandError` при несовпадении
+  `category.kind` и `command.kind` (`src/finplan/application/use_cases/
+  transactions/record_transaction.py:59-63`, категория дохода на операции
+  расхода и наоборот). Параметризованный тест на строках 27–68 проверяет
+  только совпадающие пары `kind`/`category_kind`. Нарушен раздел 11.1/11.2:
+  «ошибочные ветки… покрыты там, где use case их порождает». Последствие:
+  инвариант «категория дохода не подходит для расхода» может сломаться при
+  рефакторинге use case, и тесты этого не заметят.
+- **Нарушение.** `tests/unit/application/test_get_balances.py:64` — нет
+  теста на `NotFoundError`, которую `GetBalances` бросает при отсутствии
+  пользователя (`src/finplan/application/use_cases/accounts/
+  get_balances.py:32`). В файле единственный тест проверяет только расчёт
+  остатка. Нарушен раздел 11.1/11.2. Последствие: use case для
+  несуществующего/невалидного `user_id` может начать падать необработанным
+  исключением или тихо возвращать пустой результат — тест это не поймает.
+- **Нарушение.** `tests/unit/application/test_period_summary.py:215` — нет
+  теста на `NotFoundError`, которую `GetPeriodSummary` бросает при
+  отсутствии пользователя (`src/finplan/application/use_cases/reports/
+  period_summary.py:41`). Нарушен раздел 11.1/11.2 по той же причине, что и
+  предыдущая находка. Ветка `NotFoundError` при рассинхроне
+  `total.category_id` и списка категорий (`period_summary.py:70`) тоже не
+  покрыта, но это защитный код от повреждённых данных, а не сценарий,
+  который бьёт use case намеренно в тесте, — отдельной находкой не считаю.
+- **Замечание.** `tests/unit/application/test_period_summary.py:29-49` —
+  граница полуинтервала `[from, to)` с реальной операцией на границе
+  проверена только для `scope="day"` (`test_day_boundary_from_is_included_
+  and_to_is_excluded`, строки 52–93). Для `scope="month"` проверен только
+  расчёт дат периода (`test_day_and_month_periods_are_computed_in_user_
+  timezone`, строки 29–49), без операции ровно в `to`/`from`. Риск невелик:
+  `GetPeriodSummary` (`period_summary.py:44-51`) считает границы обоих
+  периодов одним и тем же кодом, различается только `Period.for_day` /
+  `Period.for_month`, так что тест дня фактически покрывает и механизм
+  сравнения `start <= occurred_at < end` для месяца. Задание подзадачи 7b
+  прямо требует проверки обоих периодов на границе, поэтому называю это
+  замечанием: дефект специфичный для месячной границы (например, в
+  `Period.for_month`) реальный тест поймает раньше на подзадаче 9b —
+  реализации `infrastructure/db/queries/` с настоящим SQL `[from, to)` — и
+  на подзадаче 10, интеграционных тестах инфраструктуры.
+
+Не хватило: прогона `uv run pytest` и `uv run mypy --strict
+tests/unit/application` — не запускал по границам задачи (диспетчер
+подтвердил зелёный `4e2264d`); находки выше не требуют прогона, чтобы быть
+подтверждёнными — они про отсутствующие тесты, а не про падающие.
+
+**Решения и отложенное.**
+
+- Заглушки в `fakes.py` проверены построчно на соответствие контракту UoW
+  (раздел 2.2): `__aexit__` без `commit()` отбрасывает `_staged`, `commit()`
+  переносит копию в `Store`, каждый репозиторий фильтрует по `user_id`.
+  Расхождений с протоколом не нашёл — не нарушение.
+- Сторно (`test_undo_last.py`, `test_period_summary.py:166-214`) проверено
+  по «Форме сторно» раздела 3.3 корректно: сумма и поля повторяются, не
+  инвертируются; оба конца пары получают `status = reversed`; пара выпадает
+  из агрегатов. Отдельного теста, что вызов `.reverse()` на уже
+  сторнированной операции бросает `AlreadyReversedError`, нет, но эта ветка
+  недостижима из `UndoLastTransaction` — `last_reversible` фильтрует только
+  `status = posted` без `reverses_id`, так что находкой не считаю:
+  `test_second_undo_reverses_previous_transaction_not_the_same_one`
+  (строки 86–127) уже подтверждает, что повторная отмена не трогает
+  сторнированное.
+- `xfail(strict=True)` на неизвестную таймзону
+  (`test_register_user.py:145-160`) действительно рассчитан на `XPASS`:
+  сейчас `RegisterUser` пропускает необработанный `ZoneInfoNotFoundError`
+  (`register_user.py:48`), а `pytest.raises(InvalidCommandError)` внутри
+  теста ловит именно этот факт несоответствия — не проверка вслепую.
+- `GetBalances` и `ListAccounts`/`ListCategories` не имеют явного теста
+  межпользовательской изоляции по «чужому» аккаунту в наборе фикстур, но
+  утечка исключена по конструкции: `FakeAccountRepository.list` и
+  `FakeLedgerQueries.account_movements` фильтруют по `user_id` уже внутри
+  заглушки, а `ListAccounts`/`ListCategories` явно проверены на изоляцию
+  (`test_list_accounts.py`, `test_list_categories.py`). Не нарушение — это
+  общий приём заглушек, а не пробел конкретного теста.
+- Известное из задания не повторяю: формулировку про «противоположную
+  сумму» в задании подзадачи 6 и то, что `make lint` не гоняет `mypy` по
+  `tests/`.
+
+**Вопросы диспетчеру.** Нет.

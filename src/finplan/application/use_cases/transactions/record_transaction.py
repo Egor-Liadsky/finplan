@@ -68,6 +68,16 @@ class RecordTransaction:
                     "курсов на этапе 1 нет"
                 )
 
+            # Раздел 3.1, таблица округления: хранение операции, введённой
+            # пользователем, — ROUND_HALF_UP до minor_unit валюты счёта. На
+            # этапе 1 курс равен 1, поэтому base_amount обязана совпасть с
+            # округлённой amount до знака.
+            rounded_amount = Money(command.amount, account.currency).round_to_minor_unit()
+            if rounded_amount.amount == 0:
+                raise InvalidCommandError(
+                    "сумма операции после округления до минорной единицы равна нулю"
+                )
+
             now = self._clock.now()
             occurred_at = command.occurred_at or now
             transaction = Transaction.new(
@@ -75,12 +85,12 @@ class RecordTransaction:
                 user_id=command.user_id,
                 kind=command.kind,
                 status=TransactionStatus.POSTED,
-                amount=Money(command.amount, account.currency),
+                amount=rounded_amount,
                 account_id=account.id,
                 category_id=command.category_id,
                 occurred_at=occurred_at,
                 comment=command.comment,
-                base_amount=command.amount,
+                base_amount=rounded_amount.amount,
                 base_currency=user.base_currency,
                 base_rate=Decimal(1),
                 source=command.source,

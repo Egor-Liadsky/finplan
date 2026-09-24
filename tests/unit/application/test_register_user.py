@@ -142,15 +142,6 @@ async def test_unknown_currency_code_raises_invalid_command_error(
     assert uow_factory.transactions == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Расхождение с разделом 2.2: неизвестная таймзона в RegisterUserCommand "
-        "приводит к необработанному zoneinfo.ZoneInfoNotFoundError внутри "
-        "RegisterUser вместо ApplicationError.InvalidCommandError, которую "
-        "ожидает вызывающая сторона (entrypoints)."
-    ),
-)
 async def test_unknown_timezone_raises_invalid_command_error(
     uow_factory: FakeUnitOfWorkFactory, clock: FixedClock
 ) -> None:

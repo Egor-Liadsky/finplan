@@ -586,6 +586,12 @@ currency: Currency)`. Никогда `float`. В базе — `NUMERIC(20, 4)`.
 | `depth` | `int` | 0 для корня, максимум 2 (три уровня) |
 | `is_archived` | `bool` | |
 | `sort_order` | `int` | |
+| `aliases` | `tuple[str, ...]` | Слова в нижнем регистре без пробелов по краям, непустые, без повторов |
+
+Алиасы — слова, по которым бот узнаёт категорию в тексте сообщения
+(раздел 6.5). Сущность хранит их нормализованными: пустое слово, слово с
+пробелами по краям, слово не в нижнем регистре и повтор отвергаются
+инвариантом. Приводит ввод к этой форме вызывающий use case.
 
 Инварианты: запрещены циклы; удаление категории с операциями запрещено,
 только архивация; перенос поддерева пересчитывает `path` и `depth` всех
@@ -981,6 +987,7 @@ flowchart TD
 | `icon` | `text` | NULL |
 | `is_archived` | `boolean` | NOT NULL, DEFAULT `false` |
 | `sort_order` | `integer` | NOT NULL, DEFAULT 0 |
+| `aliases` | `text[]` | NOT NULL, DEFAULT `'{}'` |
 
 Ограничения: `uq_categories_user_id_path`,
 `ck_categories_no_self_parent` (`id <> parent_id`).
@@ -1413,6 +1420,74 @@ CREATE POLICY p_transactions_owner ON transactions
 
 RLS — второй рубеж: репозитории всё равно фильтруют по `user_id`
 явно. Обоснование двойной защиты — **ADR-008**.
+
+**Таблица `users`.** RLS включается и на ней, с политикой по
+собственному ключу:
+
+```sql
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_users_self ON users
+    USING (id = current_setting('app.user_id', true)::uuid)
+    WITH CHECK (id = current_setting('app.user_id', true)::uuid);
+```
+
+Вставка нового пользователя проходит, потому что `RegisterUser` открывает
+транзакцию от имени заранее сгенерированного `id`. Но поиск по
+`telegram_id` выполняется до того, как пользователь известен: транзакция
+идёт с `user_id = None`, `app.user_id` не задан, и политика не пропускает
+ни одной строки. Для такого поиска миграция создаёт функцию, которая
+принадлежит владельцу схемы и выполняется с его правами:
+
+```sql
+CREATE FUNCTION find_user_by_telegram_id(p_telegram_id bigint)
+    RETURNS SETOF users
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path = public, pg_temp
+AS $$ SELECT * FROM users WHERE telegram_id = p_telegram_id $$;
+
+REVOKE ALL ON FUNCTION find_user_by_telegram_id(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION find_user_by_telegram_id(bigint) TO finplan_app;
+```
+
+Репозиторий пользователей ищет по `telegram_id` только через эту
+функцию, а не прямым `SELECT`. Функция возвращает не больше одной строки
+по точному ключу, поэтому перечислить пользователей через неё нельзя.
+Отвергнуты два варианта. Без RLS на `users` роль приложения видит всех
+пользователей, и ADR-008 для этой таблицы не действует. Политика,
+открывающая чтение при пустом `app.user_id`, покажет всех пользователей
+любой транзакции, где Unit of Work забыл выставить пользователя, — то есть
+защищает хуже, чем её отсутствие кажется. Тот же приём — функция
+`SECURITY DEFINER` на точный ключ — применяется ко всем поискам,
+выполняемым до установления пользователя, в том числе к поиску в
+`refresh_sessions` по `token_hash` на этапе веб-входа.
+
+**Роли базы данных.** RLS действует, только если приложение работает не
+под владельцем таблиц и не под суперпользователем: владелец политики
+обходит, пока на таблице нет `FORCE ROW LEVEL SECURITY`, а суперпользователь
+обходит их всегда. `FORCE` не включается, потому что под ним функция
+`SECURITY DEFINER` из абзаца выше тоже перестанет видеть строки. Поэтому
+ролей три:
+
+| Роль | Кто подключается | Атрибуты и права |
+|---|---|---|
+| `finplan` | миграции Alembic, `MIGRATIONS_DATABASE_URL` | Владелец схемы, таблиц и функций |
+| `finplan_app` | `api` и `bot`, `DATABASE_URL` | `LOGIN`, `NOBYPASSRLS`; `SELECT`, `INSERT`, `UPDATE`, `DELETE` на таблицы, `USAGE` на последовательности, `EXECUTE` на функции поиска |
+| `finplan_worker` | `worker`, `WORKER_DATABASE_URL` | `LOGIN`, `BYPASSRLS`; те же права, что у `finplan_app` |
+
+Роли создаёт окружение, а не миграция: атрибут `BYPASSRLS` может выдать
+только суперпользователь, а пароли не должны попадать в историю
+миграций. Локально их создаёт скрипт инициализации контейнера
+`postgres`, записанный в `docker-compose.yml` как `configs` с полем
+`content` и подключённый в `/docker-entrypoint-initdb.d/`. Пароли в нём
+совпадают с именами ролей и годятся только для разработки. Скрипт
+инициализации выполняется только на пустом томе, поэтому после его
+появления локальный том пересоздаётся: `docker compose down -v`. В
+`staging` и `production` роли заводит администратор базы. Миграция
+выдаёт права через `GRANT` и `ALTER DEFAULT PRIVILEGES`. Если роли не
+существует, она падает с понятным сообщением, а не создаёт роль сама.
+
+Интеграционные тесты подключаются как `finplan_app`: под владельцем
+тест изоляции пользователей прошёл бы, даже если бы политики не было.
 
 ---
 
@@ -2603,11 +2678,12 @@ sequenceDiagram
 | `APP_BASE_URL` | да | — | Публичный URL SPA, для ссылок из бота |
 | `LOG_LEVEL` | нет | `INFO` | |
 | `LOG_FORMAT` | нет | `json` | `json` или `console` |
-| `DATABASE_URL` | да | — | `postgresql+asyncpg://user:pass@host:5432/finplan` |
+| `DATABASE_URL` | да | — | `postgresql+asyncpg://user:pass@host:5432/finplan`; роль `finplan_app` без `BYPASSRLS` (4.5) |
 | `DATABASE_POOL_SIZE` | нет | `10` | |
 | `DATABASE_MAX_OVERFLOW` | нет | `5` | |
 | `DATABASE_ECHO` | нет | `false` | |
-| `WORKER_DATABASE_URL` | нет | `DATABASE_URL` | Роль с `BYPASSRLS` для `worker` |
+| `WORKER_DATABASE_URL` | нет | `DATABASE_URL` | Роль с `BYPASSRLS` для `worker`, `finplan_worker` (4.5) |
+| `MIGRATIONS_DATABASE_URL` | нет | `DATABASE_URL` | Владелец схемы для Alembic, `finplan` (4.5) |
 | `REDIS_URL` | нет | — | `redis://redis:6379/0`; отсутствие переключает FSM на память |
 | `TELEGRAM_BOT_TOKEN` | да | — | Токен бота |
 | `TELEGRAM_MODE` | нет | `polling` | `polling` или `webhook` |

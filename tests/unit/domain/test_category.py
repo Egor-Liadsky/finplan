@@ -134,6 +134,46 @@ def test_child_inherits_kind_from_parent() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Алиасы: нормализованные слова без повторов (раздел 3.3)
+# ---------------------------------------------------------------------------
+
+
+def _root_with_aliases(aliases: tuple[str, ...]) -> Category:
+    return Category(
+        id=uuid4(),
+        user_id=uuid4(),
+        parent_id=None,
+        kind=CategoryKind.EXPENSE,
+        name="Кофе",
+        path="coffee",
+        depth=0,
+        aliases=aliases,
+    )
+
+
+def test_category_has_no_aliases_by_default() -> None:
+    root = Category.new_root(
+        id=uuid4(), user_id=uuid4(), kind=CategoryKind.EXPENSE, slug="food", name="Еда"
+    )
+    assert root.aliases == ()
+
+
+def test_normalized_aliases_are_accepted() -> None:
+    assert _root_with_aliases(("кофе", "латте")).aliases == ("кофе", "латте")
+
+
+@pytest.mark.parametrize("alias", ["", "Кофе", " кофе", "кофе "])
+def test_not_normalized_alias_is_rejected(alias: str) -> None:
+    with pytest.raises(InvariantViolationError):
+        _root_with_aliases((alias,))
+
+
+def test_duplicate_aliases_are_rejected() -> None:
+    with pytest.raises(InvariantViolationError):
+        _root_with_aliases(("кофе", "кофе"))
+
+
+# ---------------------------------------------------------------------------
 # Дефолтное дерево категорий
 # ---------------------------------------------------------------------------
 

@@ -1,7 +1,7 @@
 """Сущность `Category`: иерархия категорий доходов и расходов.
 
 `docs/architecture.md`, раздел 3.3, таблица `Category` и абзацы под ней про
-слаги и дефолтный набор; раздел 3.2 для `CategoryKind`.
+алиасы, слаги и дефолтный набор; раздел 3.2 для `CategoryKind`.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ class Category:
     depth: int
     is_archived: bool = False
     sort_order: int = 0
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not 0 <= self.depth <= MAX_DEPTH:
@@ -57,6 +58,14 @@ class Category:
             raise InvariantViolationError("корневая категория не может иметь parent_id")
         if self.depth > 0 and self.parent_id is None:
             raise InvariantViolationError("некорневая категория обязана иметь parent_id")
+        for alias in self.aliases:
+            if not alias or alias != alias.strip().lower():
+                raise InvariantViolationError(
+                    f"алиас {alias!r} должен быть непустым, в нижнем регистре "
+                    "и без пробелов по краям"
+                )
+        if len(set(self.aliases)) != len(self.aliases):
+            raise InvariantViolationError(f"алиасы повторяются: {self.aliases!r}")
 
     @classmethod
     def new_root(

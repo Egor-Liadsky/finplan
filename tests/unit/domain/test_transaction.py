@@ -8,9 +8,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -38,6 +39,7 @@ def _make_transaction(
     counter_account_id: UUID | None = None,
     category_id: object = _UNSET,
     occurred_at: datetime | None = None,
+    occurred_on: date | None = None,
     reverses_id: UUID | None = None,
     external_key: str | None = None,
 ) -> Transaction:
@@ -45,13 +47,16 @@ def _make_transaction(
 
     `category_id` по умолчанию выставляется автоматически: `uuid4()` для
     `income`/`expense`, `None` для остальных видов — так каждый тест меняет
-    только то поле, которое действительно проверяет.
+    только то поле, которое действительно проверяет. `occurred_on` по
+    умолчанию — дата `occurred_at` в UTC, как для `Transaction.new` с
+    `timezone = UTC`.
     """
     resolved_category_id = (
         (uuid4() if kind in (TransactionKind.INCOME, TransactionKind.EXPENSE) else None)
         if category_id is _UNSET
         else category_id
     )
+    resolved_occurred_at = occurred_at or _NOW
     return Transaction(
         id=uuid4(),
         user_id=uuid4(),
@@ -61,7 +66,8 @@ def _make_transaction(
         account_id=account_id or uuid4(),
         counter_account_id=counter_account_id,
         category_id=resolved_category_id,
-        occurred_at=occurred_at or _NOW,
+        occurred_at=resolved_occurred_at,
+        occurred_on=occurred_on or resolved_occurred_at.date(),
         comment=None,
         base_amount=amount,
         base_currency=RUB,
@@ -167,6 +173,7 @@ def _new_transaction(
     status: TransactionStatus,
     occurred_at: datetime,
     now: datetime = _NOW,
+    timezone: tzinfo = UTC,
 ) -> Transaction:
     return Transaction.new(
         id=uuid4(),
@@ -176,6 +183,7 @@ def _new_transaction(
         amount=Money(Decimal("10.00"), RUB),
         account_id=uuid4(),
         occurred_at=occurred_at,
+        timezone=timezone,
         base_amount=Decimal("10.00"),
         base_currency=RUB,
         base_rate=Decimal("1"),
@@ -208,6 +216,40 @@ def test_pending_transaction_far_in_future_is_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# `occurred_on` — календарная дата `occurred_at` в таймзоне пользователя
+# ---------------------------------------------------------------------------
+
+
+def test_occurred_on_uses_user_timezone_moscow() -> None:
+    transaction = _new_transaction(
+        status=TransactionStatus.POSTED,
+        occurred_at=datetime(2026, 9, 23, 22, 30, tzinfo=UTC),
+        now=datetime(2026, 9, 23, 23, 0, tzinfo=UTC),
+        timezone=ZoneInfo("Europe/Moscow"),
+    )
+    assert transaction.occurred_on == date(2026, 9, 24)
+
+
+def test_occurred_on_uses_utc_when_timezone_is_utc() -> None:
+    transaction = _new_transaction(
+        status=TransactionStatus.POSTED,
+        occurred_at=datetime(2026, 9, 23, 22, 30, tzinfo=UTC),
+        now=datetime(2026, 9, 23, 23, 0, tzinfo=UTC),
+        timezone=UTC,
+    )
+    assert transaction.occurred_on == date(2026, 9, 23)
+
+
+def test_naive_occurred_at_is_rejected() -> None:
+    with pytest.raises(InvariantViolationError):
+        _new_transaction(
+            status=TransactionStatus.POSTED,
+            occurred_at=datetime(2026, 9, 23, 22, 30),  # naive — как раз проверяем это отклонение
+            timezone=UTC,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Сторно
 # ---------------------------------------------------------------------------
 
@@ -223,7 +265,11 @@ def test_reverse_moves_original_from_posted_to_reversed() -> None:
 
 def test_reversal_copies_original_and_is_created_as_reversed() -> None:
     original = _make_transaction(
-        status=TransactionStatus.POSTED, external_key="idem-1", amount=Decimal("42.00")
+        status=TransactionStatus.POSTED,
+        external_key="idem-1",
+        amount=Decimal("42.00"),
+        occurred_at=datetime(2026, 9, 23, 22, 30, tzinfo=UTC),
+        occurred_on=date(2026, 9, 24),
     )
     reversal_id = uuid4()
     created_at = _NOW + timedelta(minutes=1)
@@ -240,6 +286,8 @@ def test_reversal_copies_original_and_is_created_as_reversed() -> None:
     assert reversal.counter_account_id == original.counter_account_id
     assert reversal.category_id == original.category_id
     assert reversal.occurred_at == original.occurred_at
+    assert reversal.occurred_on == original.occurred_on
+    assert reversal.occurred_on == date(2026, 9, 24)
     assert reversal.base_amount == original.base_amount
     assert reversal.base_currency == original.base_currency
     assert reversal.base_rate == original.base_rate

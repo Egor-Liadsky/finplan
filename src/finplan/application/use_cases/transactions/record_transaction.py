@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from finplan.application.dto.transactions import RecordTransactionCommand, TransactionDTO
 from finplan.application.errors import InvalidCommandError, NotFoundError
@@ -80,6 +81,9 @@ class RecordTransaction:
 
             now = self._clock.now()
             occurred_at = command.occurred_at or now
+            # `user.timezone` — IANA-имя уже сохранённого пользователя. Если оно
+            # не разбирается, это повреждённые данные, а не ошибка команды:
+            # ZoneInfoNotFoundError не перехватывается и поднимается наверх.
             transaction = Transaction.new(
                 id=uuid4(),
                 user_id=command.user_id,
@@ -89,6 +93,7 @@ class RecordTransaction:
                 account_id=account.id,
                 category_id=command.category_id,
                 occurred_at=occurred_at,
+                timezone=ZoneInfo(user.timezone),
                 comment=command.comment,
                 base_amount=rounded_amount.amount,
                 base_currency=user.base_currency,

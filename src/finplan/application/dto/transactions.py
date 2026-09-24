@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -47,6 +47,7 @@ class TransactionDTO(Dto):
     account_id: UUID
     category_id: UUID | None
     occurred_at: datetime
+    occurred_on: date
     comment: str | None
     reverses_id: UUID | None
     created_at: datetime
@@ -63,6 +64,7 @@ class TransactionDTO(Dto):
             account_id=transaction.account_id,
             category_id=transaction.category_id,
             occurred_at=transaction.occurred_at,
+            occurred_on=transaction.occurred_on,
             comment=transaction.comment,
             reverses_id=transaction.reverses_id,
             created_at=transaction.created_at,

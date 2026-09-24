@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
@@ -58,6 +58,7 @@ class Transaction:
     counter_account_id: UUID | None
     category_id: UUID | None
     occurred_at: datetime
+    occurred_on: date
     comment: str | None
     base_amount: Decimal
     base_currency: Currency
@@ -104,6 +105,7 @@ class Transaction:
         amount: Money,
         account_id: UUID,
         occurred_at: datetime,
+        timezone: tzinfo,
         base_amount: Decimal,
         base_currency: Currency,
         base_rate: Decimal,
@@ -122,13 +124,22 @@ class Transaction:
         """Создаёт новую операцию, проверяя ограничение на будущий `occurred_at`.
 
         `now` — аргумент, а не вызов часов: у домена их нет, `now` в него
-        подставляет `application` через порт `Clock` (раздел 3.3).
+        подставляет `application` через порт `Clock` (раздел 3.3). `timezone`
+        — разобранная `application` таймзона пользователя (`User.timezone`),
+        в домене `zoneinfo` не импортируется. `occurred_on` вычисляется один
+        раз здесь и не пересчитывается при смене `User.timezone` позже
+        (раздел 3.3).
         """
+        if occurred_at.tzinfo is None:
+            raise InvariantViolationError(
+                "occurred_at должен быть с таймзоной: дата из наивного момента неоднозначна"
+            )
         if status is TransactionStatus.POSTED and occurred_at > now + MAX_FUTURE_POSTED_LAG:
             raise InvariantViolationError(
                 "occurred_at проведённой операции не может быть более чем на "
                 f"{MAX_FUTURE_POSTED_LAG} в будущем относительно {now}"
             )
+        occurred_on = occurred_at.astimezone(timezone).date()
         return cls(
             id=id,
             user_id=user_id,
@@ -139,6 +150,7 @@ class Transaction:
             counter_account_id=counter_account_id,
             category_id=category_id,
             occurred_at=occurred_at,
+            occurred_on=occurred_on,
             comment=comment,
             base_amount=base_amount,
             base_currency=base_currency,

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -189,6 +189,7 @@ def make_transaction() -> Callable[..., Transaction]:
         amount: Decimal = Decimal("100.00"),
         currency: Currency = RUB,
         occurred_at: datetime = NOW,
+        timezone: tzinfo = UTC,
         status: TransactionStatus = TransactionStatus.POSTED,
         source: str = "bot",
         reverses_id: UUID | None = None,
@@ -203,6 +204,7 @@ def make_transaction() -> Callable[..., Transaction]:
             amount=Money(amount, currency),
             account_id=account_id,
             occurred_at=occurred_at,
+            timezone=timezone,
             base_amount=amount,
             base_currency=currency,
             base_rate=Decimal("1"),

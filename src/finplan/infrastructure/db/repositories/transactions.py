@@ -55,17 +55,7 @@ class SqlAlchemyTransactionRepository:
             counter_account_id=transaction.counter_account_id,
             category_id=transaction.category_id,
             occurred_at=transaction.occurred_at,
-            # Раздел 4.3: `occurred_on` — дата в таймзоне пользователя,
-            # денормализованная для группировок. `Transaction` таймзону
-            # пользователя не хранит (её несёт `User.timezone`, недоступный
-            # здесь без дополнительного запроса), поэтому вычисляется как
-            # календарная дата `occurred_at`. Ни один текущий сценарий
-            # `occurred_on` не читает (ленты и отчёты этапа 1 используют
-            # `occurred_at`); когда появится первый читатель, нужно решить,
-            # передавать ли таймзону пользователя в `Transaction.new` или
-            # пересчитывать `occurred_on` здесь по `User.timezone` —
-            # вопрос диспетчеру, а не решение этого репозитория.
-            occurred_on=transaction.occurred_at.date(),
+            occurred_on=transaction.occurred_on,
             comment=transaction.comment,
             base_amount=transaction.base_amount,
             base_currency=transaction.base_currency.code,
@@ -148,6 +138,7 @@ def _to_domain(model: TransactionModel, minor_units: dict[str, int]) -> Transact
         counter_account_id=model.counter_account_id,
         category_id=model.category_id,
         occurred_at=model.occurred_at,
+        occurred_on=model.occurred_on,
         comment=model.comment,
         base_amount=model.base_amount,
         base_currency=base_currency,

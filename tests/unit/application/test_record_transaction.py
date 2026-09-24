@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -66,6 +67,38 @@ async def test_expense_and_income_are_saved_with_positive_amount_and_matching_ki
     assert result.category_id == category.id
     assert result.occurred_at == clock.now()
     assert uow_factory.transactions[-1].committed is True
+
+
+async def test_occurred_on_is_computed_in_user_timezone(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+) -> None:
+    user = make_user(timezone="Europe/Moscow")
+    account = make_account(user_id=user.id, currency=RUB)
+    category = make_category(user_id=user.id, kind=CategoryKind.EXPENSE)
+    seed(users=[user], accounts=[account], categories=[category])
+    clock.set(datetime(2026, 9, 23, 22, 30, tzinfo=UTC))
+
+    use_case = RecordTransaction(uow_factory, clock)
+    result = await use_case(
+        RecordTransactionCommand(
+            user_id=user.id,
+            kind=TransactionKind.EXPENSE,
+            amount=Decimal("10.00"),
+            account_id=account.id,
+            category_id=category.id,
+            occurred_at=datetime(2026, 9, 23, 22, 30, tzinfo=UTC),
+            comment=None,
+            external_key=None,
+            source="bot",
+        )
+    )
+
+    assert result.occurred_on == date(2026, 9, 24)
 
 
 async def test_missing_account_raises_not_found(

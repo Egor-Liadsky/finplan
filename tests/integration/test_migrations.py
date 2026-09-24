@@ -41,7 +41,13 @@ async def test_migration_cycle_upgrade_downgrade_upgrade(
     alembic_runner(fresh_database_url, "upgrade", "head")
 
     tables_after_first_upgrade = await _table_names(fresh_database_url)
-    assert {"users", "currencies"} <= tables_after_first_upgrade
+    assert {
+        "users",
+        "currencies",
+        "accounts",
+        "categories",
+        "transactions",
+    } <= tables_after_first_upgrade
 
     engine = create_async_engine(fresh_database_url)
     try:
@@ -56,12 +62,21 @@ async def test_migration_cycle_upgrade_downgrade_upgrade(
     tables_after_downgrade = await _table_names(fresh_database_url)
     assert "users" not in tables_after_downgrade
     assert "currencies" not in tables_after_downgrade
+    assert "accounts" not in tables_after_downgrade
+    assert "categories" not in tables_after_downgrade
+    assert "transactions" not in tables_after_downgrade
 
     # Третий шаг не должен требовать ручного вмешательства между шагами.
     alembic_runner(fresh_database_url, "upgrade", "head")
 
     tables_after_second_upgrade = await _table_names(fresh_database_url)
-    assert {"users", "currencies"} <= tables_after_second_upgrade
+    assert {
+        "users",
+        "currencies",
+        "accounts",
+        "categories",
+        "transactions",
+    } <= tables_after_second_upgrade
 
 
 def test_alembic_check_matches_sqlalchemy_metadata(

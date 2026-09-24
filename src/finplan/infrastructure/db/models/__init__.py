@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
+from finplan.infrastructure.db.models.accounts import Account
+from finplan.infrastructure.db.models.categories import Category
 from finplan.infrastructure.db.models.currencies import Currency
+from finplan.infrastructure.db.models.transactions import Transaction
 from finplan.infrastructure.db.models.users import User
 
-__all__ = ["Currency", "User"]
+__all__ = ["Account", "Category", "Currency", "Transaction", "User"]

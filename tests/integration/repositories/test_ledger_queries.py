@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 from finplan.application.ports.uow import UnitOfWorkFactory
+from finplan.domain.common.currency import RUB, USD
 from finplan.domain.entities.account import Account
 from finplan.domain.entities.category import Category, CategoryKind
 from finplan.domain.entities.transaction import (
@@ -184,6 +185,84 @@ class TestAccountMovements:
         # компенсируются нулём.
         assert movements[account_a.id] == Decimal("1000.0000")
 
+    async def test_posted_interest_adds_to_account_by_account_id(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        """Раздел 5.7: `kind IN ('income', 'interest')` со знаком плюс по
+        `account_id` — находка ревью 11b/11d, `interest` раньше в сумму не
+        попадал вовсе.
+        """
+        user, account_a, _account_b, _expense_category, _income_category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        interest = make_transaction(
+            user_id=user.id,
+            account_id=account_a.id,
+            category_id=None,
+            kind=TransactionKind.INTEREST,
+            amount=Decimal("15.5000"),
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(interest)
+            await uow.commit()
+
+        async with uow_factory(user.id) as uow:
+            movements = await uow.ledger.account_movements(user.id)
+
+        assert movements[account_a.id] == Decimal("15.5000")
+
+    async def test_reversed_interest_does_not_add_to_account(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        """Тот же вид операции (`interest`), но сторнированная пара: обе
+        строки получают `status = reversed` и в сумму по счёту не входят —
+        запрос учитывает только `posted` (раздел 2.2).
+        """
+        user, account_a, _account_b, _expense_category, income_category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        kept_income = make_transaction(
+            user_id=user.id,
+            account_id=account_a.id,
+            category_id=income_category.id,
+            kind=TransactionKind.INCOME,
+            amount=Decimal("200.0000"),
+        )
+        interest_to_reverse = make_transaction(
+            user_id=user.id,
+            account_id=account_a.id,
+            category_id=None,
+            kind=TransactionKind.INTEREST,
+            amount=Decimal("15.5000"),
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(kept_income)
+            await uow.transactions.add(interest_to_reverse)
+            await uow.commit()
+
+        reversed_original, reversal = interest_to_reverse.reverse(
+            reversal_id=uuid4(), created_at=datetime(2026, 1, 16, 9, 0, tzinfo=UTC)
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.mark_reversed(user.id, reversed_original.id)
+            await uow.transactions.add(reversal)
+            await uow.commit()
+
+        async with uow_factory(user.id) as uow:
+            movements = await uow.ledger.account_movements(user.id)
+
+        assert movements[account_a.id] == Decimal("200.0000")
+
 
 class TestTotalsByCategory:
     """Раздел 3.1/4.1: суммы `base_amount` по категориям, полуинтервал
@@ -339,3 +418,48 @@ class TestTotalsByCategory:
         by_category = {(total.category_id, total.kind): total.base_amount for total in totals}
         assert by_category[(income_category.id, TransactionKind.INCOME)] == Decimal("150.5000")
         assert by_category[(expense_category.id, TransactionKind.EXPENSE)] == Decimal("40.2500")
+
+    async def test_sums_base_amount_not_amount_for_foreign_currency_transaction(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        """Раздел 3.1 «Мультивалютность в операциях»: операция хранит сумму
+        в валюте счёта (`amount`) и отдельный снимок в базовой валюте
+        (`base_amount`). Отчёт суммирует `base_amount`, а не `amount` — при
+        разных числовых значениях подмена одного на другое даёт другую
+        сумму, поэтому тест ловит регрессию, а не проходит при любой из
+        двух реализаций.
+        """
+        user, account_a, _account_b, expense_category, _income_category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        start = datetime(2026, 2, 1, tzinfo=UTC)
+        end = datetime(2026, 3, 1, tzinfo=UTC)
+        moment = datetime(2026, 2, 15, tzinfo=UTC)
+        foreign_currency_expense = make_transaction(
+            user_id=user.id,
+            account_id=account_a.id,
+            category_id=expense_category.id,
+            kind=TransactionKind.EXPENSE,
+            amount=Decimal("100.0000"),
+            currency=USD,
+            occurred_at=moment,
+            base_amount=Decimal("9500.0000"),
+            base_currency=RUB,
+            base_rate=Decimal("95.0000000000"),
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(foreign_currency_expense)
+            await uow.commit()
+
+        async with uow_factory(user.id) as uow:
+            totals = await uow.ledger.totals_by_category(user.id, start, end)
+
+        assert len(totals) == 1
+        assert totals[0].category_id == expense_category.id
+        # `base_amount` (9500.0000), а не `amount` в валюте счёта (100.0000).
+        assert totals[0].base_amount == Decimal("9500.0000")

@@ -101,6 +101,43 @@ async def test_occurred_on_is_computed_in_user_timezone(
     assert result.occurred_on == date(2026, 9, 24)
 
 
+async def test_occurred_on_is_computed_in_user_timezone_with_negative_offset(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+) -> None:
+    """Раздел 3.3: у пользователя с отрицательным смещением от UTC
+    (`America/Los_Angeles`, UTC-7 в сентябре) операция, для которой в UTC
+    уже наступил `2026-09-24`, получает `occurred_on = 2026-09-23` — дату,
+    которая всё ещё текущая по местному времени пользователя.
+    """
+    user = make_user(timezone="America/Los_Angeles")
+    account = make_account(user_id=user.id, currency=RUB)
+    category = make_category(user_id=user.id, kind=CategoryKind.EXPENSE)
+    seed(users=[user], accounts=[account], categories=[category])
+    clock.set(datetime(2026, 9, 24, 2, 30, tzinfo=UTC))
+
+    use_case = RecordTransaction(uow_factory, clock)
+    result = await use_case(
+        RecordTransactionCommand(
+            user_id=user.id,
+            kind=TransactionKind.EXPENSE,
+            amount=Decimal("10.00"),
+            account_id=account.id,
+            category_id=category.id,
+            occurred_at=datetime(2026, 9, 24, 2, 30, tzinfo=UTC),
+            comment=None,
+            external_key=None,
+            source="bot",
+        )
+    )
+
+    assert result.occurred_on == date(2026, 9, 23)
+
+
 async def test_missing_account_raises_not_found(
     uow_factory: FakeUnitOfWorkFactory,
     clock: FixedClock,

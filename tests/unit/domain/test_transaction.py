@@ -230,6 +230,22 @@ def test_occurred_on_uses_user_timezone_moscow() -> None:
     assert transaction.occurred_on == date(2026, 9, 24)
 
 
+def test_occurred_on_uses_user_timezone_with_negative_utc_offset() -> None:
+    """Раздел 3.3: смещение от UTC бывает и отрицательным. В `America/
+    Los_Angeles` (UTC-7 в сентябре, летнее время) операция в 02:30 UTC —
+    уже новый день по UTC (`2026-09-24`), а у пользователя ещё предыдущий
+    (`2026-09-23`): дата сдвигается назад, а не только вперёд, как в тесте
+    с `Europe/Moscow`.
+    """
+    transaction = _new_transaction(
+        status=TransactionStatus.POSTED,
+        occurred_at=datetime(2026, 9, 24, 2, 30, tzinfo=UTC),
+        now=datetime(2026, 9, 24, 3, 0, tzinfo=UTC),
+        timezone=ZoneInfo("America/Los_Angeles"),
+    )
+    assert transaction.occurred_on == date(2026, 9, 23)
+
+
 def test_occurred_on_uses_utc_when_timezone_is_utc() -> None:
     transaction = _new_transaction(
         status=TransactionStatus.POSTED,

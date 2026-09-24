@@ -11,10 +11,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from finplan.application.ports.repositories import DuplicateError
@@ -176,6 +178,86 @@ class TestTransactionRepository:
         assert stored is not None
         assert stored.occurred_on == date(2026, 9, 24)
 
+    async def test_occurred_on_uses_user_timezone_with_negative_utc_offset(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        app_connection: AsyncConnection,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        """Раздел 3.3: у пользователя с отрицательным смещением от UTC
+        (`America/Los_Angeles`, UTC-7 в сентябре) операция в 02:30 UTC —
+        уже `2026-09-24` в UTC — хранится с `occurred_on = 2026-09-23`,
+        текущей датой по местному времени пользователя.
+        """
+        user, account, category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        occurred_at = datetime(2026, 9, 24, 2, 30, tzinfo=UTC)
+        transaction = make_transaction(
+            user_id=user.id,
+            account_id=account.id,
+            category_id=category.id,
+            occurred_at=occurred_at,
+            timezone=ZoneInfo("America/Los_Angeles"),
+        )
+        assert transaction.occurred_on == date(2026, 9, 23)
+
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(transaction)
+            await uow.commit()
+
+        column_value = await app_connection.scalar(
+            text("SELECT occurred_on FROM transactions WHERE id = :id"),
+            {"id": transaction.id},
+        )
+        assert column_value == date(2026, 9, 23)
+
+        async with uow_factory(user.id) as uow:
+            stored = await uow.transactions.get(user.id, transaction.id)
+        assert stored is not None
+        assert stored.occurred_on == date(2026, 9, 23)
+
+    async def test_second_reversal_of_same_original_raises_duplicate_error_about_reversal(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        """Раздел 4.3: `uq_transactions_reverses_id` допускает не больше
+        одной сторнирующей записи на исходную операцию. Вторая запись с тем
+        же `reverses_id` даёт `DuplicateError` с текстом про повторное
+        сторно, а не про `external_key` (находка ревью 11b/11c).
+        """
+        user, account, category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        original = make_transaction(user_id=user.id, account_id=account.id, category_id=category.id)
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(original)
+            await uow.commit()
+
+        _reversed_original, first_reversal = original.reverse(
+            reversal_id=uuid4(), created_at=datetime(2026, 1, 16, 9, 0, tzinfo=UTC)
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.mark_reversed(user.id, original.id)
+            await uow.transactions.add(first_reversal)
+            await uow.commit()
+
+        _reversed_again, second_reversal = original.reverse(
+            reversal_id=uuid4(), created_at=datetime(2026, 1, 16, 9, 5, tzinfo=UTC)
+        )
+        with pytest.raises(DuplicateError, match="уже сторнирована") as exc_info:
+            async with uow_factory(user.id) as uow:
+                await uow.transactions.add(second_reversal)
+
+        assert "external_key" not in str(exc_info.value)
+
     async def test_mark_reversed_changes_status(
         self,
         uow_factory: UnitOfWorkFactory,
@@ -268,6 +350,84 @@ class TestTransactionRepository:
         async with uow_factory(user.id) as uow:
             reversible = await uow.transactions.last_reversible(user.id, "bot")
         assert reversible is None
+
+
+class TestImmutabilityTrigger:
+    """Раздел 4.2/4.3: `trg_transactions_immutable` на уровне БД отклоняет
+    любой `UPDATE`, кроме перехода `status` `posted -> reversed`, и любой
+    `DELETE` — прямым SQL под ролью `finplan_app`, в той же внешней
+    транзакции. После ожидаемой ошибки соединение находится в состоянии
+    `InFailedSqlTransaction`, пока не откатится к вложенному `SAVEPOINT`,
+    поставленному явно вокруг проверяемой команды, — иначе следующая
+    команда в этой же внешней транзакции тоже падает.
+    """
+
+    async def test_update_of_other_column_is_rejected(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        app_connection: AsyncConnection,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        user, account, category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        transaction = make_transaction(
+            user_id=user.id, account_id=account.id, category_id=category.id
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(transaction)
+            await uow.commit()
+
+        savepoint = await app_connection.begin_nested()
+        try:
+            with pytest.raises(DBAPIError) as exc_info:
+                await app_connection.execute(
+                    text("UPDATE transactions SET comment = 'hacked' WHERE id = :id"),
+                    {"id": transaction.id},
+                )
+            sqlstate = getattr(exc_info.value.orig, "sqlstate", None)
+            assert sqlstate == "P0001", f"ожидали P0001 (raise_exception), получили {sqlstate!r}"
+        finally:
+            await savepoint.rollback()
+
+    async def test_delete_is_rejected(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        app_connection: AsyncConnection,
+        make_user: Callable[..., User],
+        make_account: Callable[..., Account],
+        make_category: Callable[..., Category],
+        make_transaction: Callable[..., Transaction],
+    ) -> None:
+        user, account, category = await _setup_owner(
+            uow_factory, make_user, make_account, make_category
+        )
+        transaction = make_transaction(
+            user_id=user.id, account_id=account.id, category_id=category.id
+        )
+        async with uow_factory(user.id) as uow:
+            await uow.transactions.add(transaction)
+            await uow.commit()
+
+        savepoint = await app_connection.begin_nested()
+        try:
+            with pytest.raises(DBAPIError) as exc_info:
+                await app_connection.execute(
+                    text("DELETE FROM transactions WHERE id = :id"),
+                    {"id": transaction.id},
+                )
+            sqlstate = getattr(exc_info.value.orig, "sqlstate", None)
+            assert sqlstate == "P0001", f"ожидали P0001 (raise_exception), получили {sqlstate!r}"
+        finally:
+            await savepoint.rollback()
+
+        # Строка на месте: транзакция отклонена БД, а не молча выполнена.
+        async with uow_factory(user.id) as uow:
+            stored = await uow.transactions.get(user.id, transaction.id)
+        assert stored is not None
 
 
 class TestTenantIsolation:

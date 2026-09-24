@@ -11,6 +11,15 @@ services:
       POSTGRES_PASSWORD: finplan
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
+    # Роли finplan_app и finplan_worker (раздел 4.5) заводит окружение, не
+    # миграция: BYPASSRLS может выдать только суперпользователь, а пароли не
+    # должны попадать в историю миграций Alembic. Скрипт инициализации
+    # выполняется только на пустом томе PostgreSQL — после появления или
+    # изменения этого файла локальный том пересоздаётся: `docker compose
+    # down -v`, затем `docker compose up -d`.
+    configs:
+      - source: init_db_roles
+        target: /docker-entrypoint-initdb.d/01-roles.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U finplan"]
       interval: 5s
@@ -76,3 +85,24 @@ services:
 
 volumes:
   pgdata:
+
+configs:
+  # Пароли равны именам ролей и годятся только для локальной разработки
+  # (раздел 4.5). Права на таблицы выдаёт миграция через GRANT — этот
+  # скрипт только создаёт роли и их атрибуты login/bypassrls.
+  # `$$` в теле DO-блока экранирован как `$$$$`: docker compose сам
+  # выполняет подстановку переменных `$VAR`/`${VAR}` в значениях `content`,
+  # поэтому одиночный `$$`, нужный PostgreSQL для dollar-quoting, превращается
+  # в один `$` до того, как файл попадёт в контейнер.
+  init_db_roles:
+    content: |
+      DO $$$$
+      BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'finplan_app') THEN
+              CREATE ROLE finplan_app LOGIN NOBYPASSRLS PASSWORD 'finplan_app';
+          END IF;
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'finplan_worker') THEN
+              CREATE ROLE finplan_worker LOGIN BYPASSRLS PASSWORD 'finplan_worker';
+          END IF;
+      END
+      $$$$;

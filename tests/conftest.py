@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import pytest_asyncio
@@ -106,12 +108,67 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_docker)
 
 
+def _create_database_roles(admin_url: str) -> None:
+    """Создаёт роли ``finplan_app`` и ``finplan_worker`` до первой миграции.
+
+    Раздел `docs/architecture.md`, 4.5: роли создаёт окружение, а не
+    миграция, — сама миграция только проверяет их существование и падает,
+    если роли нет. Локально роли заводит скрипт инициализации контейнера
+    `postgres` в `docker-compose.yml`; здесь тот же контракт воспроизводит
+    единственный вызов на контейнер `testcontainers`, потому что роли
+    кластерные, а не базоспецифичные — их видит любая база данных внутри
+    этого контейнера, включая те, что создаёт `fresh_database_url`. Пароли
+    равны именам ролей — как и в docker-compose, годятся только для тестов.
+    """
+    engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+
+    async def _run() -> None:
+        try:
+            async with engine.connect() as connection:
+                for role, attrs in (
+                    ("finplan_app", "LOGIN NOBYPASSRLS"),
+                    ("finplan_worker", "LOGIN BYPASSRLS"),
+                ):
+                    await connection.execute(
+                        text(
+                            f"DO $$ BEGIN "
+                            f"IF NOT EXISTS "
+                            f"(SELECT FROM pg_roles WHERE rolname = '{role}') THEN "
+                            f"CREATE ROLE {role} {attrs} PASSWORD '{role}'; "
+                            f"END IF; END $$;"
+                        )
+                    )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def _with_role(url: str, role: str) -> str:
+    """Подменяет пользователя и пароль строки подключения на роль ``role``.
+
+    Хост, порт, имя базы и параметры запроса (в т.ч. драйвер `asyncpg`)
+    остаются от исходного URL — меняются только учётные данные, поэтому
+    результат указывает на ту же базу под другой ролью PostgreSQL.
+    """
+    parts = urlsplit(url)
+    netloc = f"{role}:{role}@{parts.hostname}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 @pytest.fixture(scope="session")
 def postgres_container() -> Iterator[Any]:
-    """Поднимает PostgreSQL 16 в контейнере один раз на сессию pytest."""
+    """Поднимает PostgreSQL 16 в контейнере один раз на сессию pytest.
+
+    Роли `finplan_app` и `finplan_worker` (раздел 4.5) создаются сразу после
+    старта контейнера, до того как какая-либо фикстура применит миграции: с
+    подзадачи 8b миграция `grant privileges and enable row level security`
+    падает, если роли ещё не существуют.
+    """
     from testcontainers.community.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine", driver="asyncpg") as container:
+        _create_database_roles(container.get_connection_url())
         yield container
 
 
@@ -149,9 +206,27 @@ def run_alembic(database_url: str, *args: str) -> subprocess.CompletedProcess[st
 
 @pytest.fixture(scope="session")
 def migrated_database(database_url: str) -> str:
-    """Применяет ``alembic upgrade head`` на контейнере один раз на сессию."""
+    """Применяет ``alembic upgrade head`` на контейнере один раз на сессию.
+
+    `database_url` — учётные данные контейнера `testcontainers`, роль с
+    правами владельца схемы: как и `finplan` в 4.5, `alembic` подключается
+    под ней, не под `finplan_app`/`finplan_worker`.
+    """
     run_alembic(database_url, "upgrade", "head")
     return database_url
+
+
+@pytest.fixture
+def app_database_url(migrated_database: str) -> str:
+    """Строка подключения к смигрированной базе под ролью ``finplan_app``.
+
+    Раздел `docs/architecture.md`, 4.5: RLS действует только для роли без
+    прав владельца и без `BYPASSRLS` — под `finplan_app` (`LOGIN
+    NOBYPASSRLS`) её и проверяет `tests/integration/test_migrations.py`,
+    а не под ролью `migrated_database`, которая политики обходит как
+    владелец.
+    """
+    return _with_role(migrated_database, "finplan_app")
 
 
 @pytest.fixture

@@ -279,6 +279,128 @@ async def test_account_currency_different_from_base_currency_raises_invalid_comm
         )
 
 
+@pytest.mark.parametrize(
+    ("kind", "category_kind"),
+    [
+        (TransactionKind.EXPENSE, CategoryKind.INCOME),
+        (TransactionKind.INCOME, CategoryKind.EXPENSE),
+    ],
+)
+async def test_category_of_wrong_kind_raises_invalid_command(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+    kind: TransactionKind,
+    category_kind: CategoryKind,
+) -> None:
+    user = make_user()
+    account = make_account(user_id=user.id, currency=RUB)
+    category = make_category(user_id=user.id, kind=category_kind)
+    seed(users=[user], accounts=[account], categories=[category])
+
+    use_case = RecordTransaction(uow_factory, clock)
+    with pytest.raises(InvalidCommandError):
+        await use_case(
+            RecordTransactionCommand(
+                user_id=user.id,
+                kind=kind,
+                amount=Decimal("10.00"),
+                account_id=account.id,
+                category_id=category.id,
+                occurred_at=None,
+                comment=None,
+                external_key=None,
+                source="bot",
+            )
+        )
+
+    assert uow_factory.store.transactions == {}
+    assert uow_factory.transactions[-1].committed is False
+
+
+@pytest.mark.parametrize(
+    ("raw_amount", "expected_amount"),
+    [
+        (Decimal("10.005"), Decimal("10.01")),
+        (Decimal("10.004"), Decimal("10.00")),
+    ],
+)
+async def test_amount_is_rounded_half_up_to_minor_unit_and_matches_base_amount(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+    raw_amount: Decimal,
+    expected_amount: Decimal,
+) -> None:
+    # Раздел 3.1: валюты с minor_unit = 0 (например, JPY) в заглушках
+    # тестов не заведены (`fakes.py`/`conftest.py` знают только RUB, USD,
+    # EUR — у всех minor_unit = 2), поэтому этот случай проверяется только
+    # на RUB.
+    user = make_user(base_currency=RUB)
+    account = make_account(user_id=user.id, currency=RUB)
+    category = make_category(user_id=user.id, kind=CategoryKind.EXPENSE)
+    seed(users=[user], accounts=[account], categories=[category])
+
+    use_case = RecordTransaction(uow_factory, clock)
+    result = await use_case(
+        RecordTransactionCommand(
+            user_id=user.id,
+            kind=TransactionKind.EXPENSE,
+            amount=raw_amount,
+            account_id=account.id,
+            category_id=category.id,
+            occurred_at=None,
+            comment=None,
+            external_key=None,
+            source="bot",
+        )
+    )
+
+    assert result.amount == expected_amount
+    stored = uow_factory.store.transactions[result.id]
+    assert stored.amount.amount == expected_amount
+    assert stored.base_amount == expected_amount
+
+
+async def test_amount_rounding_to_zero_raises_invalid_command(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+) -> None:
+    user = make_user(base_currency=RUB)
+    account = make_account(user_id=user.id, currency=RUB)
+    category = make_category(user_id=user.id, kind=CategoryKind.EXPENSE)
+    seed(users=[user], accounts=[account], categories=[category])
+
+    use_case = RecordTransaction(uow_factory, clock)
+    with pytest.raises(InvalidCommandError):
+        await use_case(
+            RecordTransactionCommand(
+                user_id=user.id,
+                kind=TransactionKind.EXPENSE,
+                amount=Decimal("0.004"),
+                account_id=account.id,
+                category_id=category.id,
+                occurred_at=None,
+                comment=None,
+                external_key=None,
+                source="bot",
+            )
+        )
+
+    assert uow_factory.store.transactions == {}
+    assert uow_factory.transactions[-1].committed is False
+
+
 async def test_transfer_kind_raises_invalid_command(
     uow_factory: FakeUnitOfWorkFactory,
     clock: FixedClock,

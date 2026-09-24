@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+from uuid import uuid4
 
+import pytest
 from fakes import FakeUnitOfWorkFactory
 
 from finplan.application.dto.accounts import GetBalancesQuery
+from finplan.application.errors import NotFoundError
 from finplan.application.use_cases.accounts.get_balances import GetBalances
 from finplan.domain.entities.account import Account
 from finplan.domain.entities.category import Category, CategoryKind
@@ -61,3 +64,12 @@ async def test_balance_is_opening_balance_plus_movements_and_zero_without_transa
     assert balances[empty_account.id] == Decimal("0")
     assert result.total == Decimal("90.00")
     assert result.currency == user.base_currency.code
+
+
+async def test_missing_user_raises_not_found(
+    uow_factory: FakeUnitOfWorkFactory,
+) -> None:
+    use_case = GetBalances(uow_factory)
+
+    with pytest.raises(NotFoundError):
+        await use_case(GetBalancesQuery(user_id=uuid4()))

@@ -149,3 +149,62 @@ async def test_unknown_timezone_raises_invalid_command_error(
 
     with pytest.raises(InvalidCommandError):
         await use_case(_command(timezone="Mars/Phobos"))
+
+
+async def test_malformed_timezone_key_raises_invalid_command_error(
+    uow_factory: FakeUnitOfWorkFactory, clock: FixedClock
+) -> None:
+    """`ZoneInfo` бросает `ValueError`, а не `ZoneInfoNotFoundError`, на
+    синтаксически некорректный ключ вроде `Europe/..` — оба исключения
+    обязаны стать `InvalidCommandError` (раздел 2.2)."""
+    use_case = RegisterUser(uow_factory, clock)
+
+    with pytest.raises(InvalidCommandError):
+        await use_case(_command(timezone="Europe/.."))
+
+    assert uow_factory.store.users == {}
+    assert uow_factory.transactions == []
+
+
+@pytest.mark.parametrize(
+    ("raw_balance", "expected_balance"),
+    [
+        (Decimal("1000.005"), Decimal("1000.01")),
+        (Decimal("1000.004"), Decimal("1000.00")),
+    ],
+)
+async def test_opening_balance_is_rounded_half_up_to_minor_unit(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    raw_balance: Decimal,
+    expected_balance: Decimal,
+) -> None:
+    # Раздел 3.1: те же валюты, что в RecordTransaction (RUB, USD, EUR — все
+    # с minor_unit = 2), валюты с minor_unit = 0 в наборе, доступном
+    # RegisterUser, нет, поэтому проверка ограничена RUB.
+    use_case = RegisterUser(uow_factory, clock)
+
+    result = await use_case(_command(opening_balance=raw_balance))
+
+    stored_account = uow_factory.store.accounts[result.account.id]
+    assert stored_account.opening_balance.amount == expected_balance
+
+
+async def test_repeat_registration_looks_up_existing_user_without_new_id_transaction(
+    uow_factory: FakeUnitOfWorkFactory, clock: FixedClock
+) -> None:
+    use_case = RegisterUser(uow_factory, clock)
+    first = await use_case(_command())
+
+    uow_factory.transactions.clear()
+
+    second = await use_case(_command(username="alice-again", first_name="Алиса II"))
+
+    assert second.created is False
+    assert second.user.id == first.user.id
+    assert uow_factory.transactions[0].user_id is None
+    # Ни одна из транзакций повторной регистрации не открыта от имени
+    # нового случайного id — только поиск (`None`) и работа с уже
+    # существующим пользователем.
+    assert all(record.user_id in (None, first.user.id) for record in uow_factory.transactions)
+    assert all(record.committed is False for record in uow_factory.transactions)

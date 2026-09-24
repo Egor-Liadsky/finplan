@@ -14,9 +14,11 @@ from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
 from fakes import FakeUnitOfWorkFactory, FixedClock
 
 from finplan.application.dto.reports import PeriodSummaryQuery
+from finplan.application.errors import NotFoundError
 from finplan.application.use_cases.reports.period_summary import GetPeriodSummary
 from finplan.domain.entities.account import Account
 from finplan.domain.entities.category import Category, CategoryKind
@@ -87,6 +89,65 @@ async def test_day_boundary_from_is_included_and_to_is_excluded(
 
     use_case = GetPeriodSummary(uow_factory, clock)
     result = await use_case(PeriodSummaryQuery(user_id=user.id, scope="day"))
+
+    assert result.expense_total == Decimal("100.00")
+    assert len(result.expenses) == 1
+    assert result.expenses[0].total == Decimal("100.00")
+
+
+async def test_missing_user_raises_not_found(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+) -> None:
+    use_case = GetPeriodSummary(uow_factory, clock)
+
+    with pytest.raises(NotFoundError):
+        await use_case(PeriodSummaryQuery(user_id=uuid4(), scope="day"))
+
+
+async def test_month_boundary_from_is_included_and_to_is_excluded(
+    uow_factory: FakeUnitOfWorkFactory,
+    clock: FixedClock,
+    seed: Callable[..., None],
+    make_user: Callable[..., User],
+    make_account: Callable[..., Account],
+    make_category: Callable[..., Category],
+    make_transaction: Callable[..., Transaction],
+) -> None:
+    user = make_user(timezone="Europe/Moscow")
+    account = make_account(user_id=user.id)
+    category = make_category(user_id=user.id, kind=CategoryKind.EXPENSE, slug="food", name="Еда")
+
+    today_local = clock.now().astimezone(_MSK).date()
+    month_start_local = date(today_local.year, today_local.month, 1)
+    next_month_start_local = (
+        date(today_local.year + 1, 1, 1)
+        if today_local.month == 12
+        else date(today_local.year, today_local.month + 1, 1)
+    )
+    start_utc = datetime.combine(month_start_local, time.min, tzinfo=_MSK).astimezone(UTC)
+    end_utc = datetime.combine(next_month_start_local, time.min, tzinfo=_MSK).astimezone(UTC)
+
+    on_start = make_transaction(
+        user_id=user.id,
+        account_id=account.id,
+        category_id=category.id,
+        kind=TransactionKind.EXPENSE,
+        amount=Decimal("100.00"),
+        occurred_at=start_utc,
+    )
+    on_end = make_transaction(
+        user_id=user.id,
+        account_id=account.id,
+        category_id=category.id,
+        kind=TransactionKind.EXPENSE,
+        amount=Decimal("999.00"),
+        occurred_at=end_utc,
+    )
+    seed(users=[user], accounts=[account], categories=[category], transactions=[on_start, on_end])
+
+    use_case = GetPeriodSummary(uow_factory, clock)
+    result = await use_case(PeriodSummaryQuery(user_id=user.id, scope="month"))
 
     assert result.expense_total == Decimal("100.00")
     assert len(result.expenses) == 1

@@ -125,4 +125,113 @@ git diff e3aad34..540d38c -- docs/architecture.md
 
 ## Результат исполнителя
 
-_Заполняет исполнитель. Выше этой строки ничего не меняется._
+**Сделано.** Отревьюены ORM-модели `accounts.py`, `categories.py`,
+`transactions.py`, `models/__init__.py`, обе миграции подзадач 8a/8b
+(`2058c667ebfe_create_accounts_categories_transactions.py`,
+`d6cb2637f739_grant_privileges_and_rls.py`), `migrations/env.py`,
+`src/finplan/config.py` и правки `docs/architecture.md` в диапазоне
+`e3aad34..540d38c` — все файлы из команды `git diff --stat` задания.
+Найдена 1 находка уровня **нарушение**, находок уровней «замечание» и
+«к документу» нет.
+
+**Проверка.**
+
+- **нарушение** — `migrations/versions/20260924_1500-2058c667ebfe_create_accounts_categories_transactions.py:42`
+  (`name="name_length"`), `:43-47` (`name="type_allowed"`), `:83`
+  (`name="no_self_parent"`), `:84` (`name="kind_allowed"`), `:85`
+  (`name="depth_range"`), `:139-142` (`name="kind_allowed"`), `:143`
+  (`name="status_allowed"`), `:144` (`name="amount_positive"`), `:145`
+  (`name="comment_length"`), `:146` (`name="base_rate_positive"`),
+  `:147-149` (`name="source_allowed"`), `:150-155`
+  (`name="transfer_shape"`), `:156-160` (`name="category_required"`) —
+  нарушает соглашение об именах ограничений из раздела 4.1
+  (`ck_%(table_name)s_%(constraint_name)s`), причём для трёх из них
+  полное имя приведено в самом документе дословно: `ck_categories_no_self_parent`
+  (раздел 4.3, строка 1012 текущей редакции — «Ограничения:
+  `uq_categories_user_id_path`, `ck_categories_no_self_parent`
+  (`id <> parent_id`)»), `ck_transactions_transfer_shape` и
+  `ck_transactions_category_required` (раздел 4.3, SQL-блок, строки
+  1052–1070). `op.create_table` в Alembic строит `Table` на «голой»
+  `sa.MetaData()` без `naming_convention` из
+  `finplan.infrastructure.db.base.Base` (проверено рендером DDL через
+  `alembic.operations.ops.CreateTableOp.to_table()` — `CheckConstraint`
+  получает буквально `name`, без префикса `ck_<table>_`), поэтому
+  реальная схема после `upgrade head` содержит ограничения с именами
+  `type_allowed`, `name_length`, `no_self_parent`, `kind_allowed`,
+  `depth_range`, `amount_positive`, `comment_length`,
+  `base_rate_positive`, `source_allowed`, `transfer_shape`,
+  `category_required` — без ожидаемого документом префикса. Для
+  сравнения: PK, FK, UQ и все индексы в этой же миграции заданы полными
+  именами вручную (`fk_accounts_user_id`, `pk_transactions`,
+  `uq_transactions_reverses_id`, `ix_transactions_user_id_occurred_at`
+  и т. д.) и совпадают с документом — упущены только `CheckConstraint`.
+  ORM-модели (`accounts.py:50,52`, `categories.py:39,41,44`,
+  `transactions.py:55-71`) сами по себе корректны: та же короткая форма
+  `name=` там превращается в полное имя автоматически, потому что
+  `Table` строится на `Base.metadata` с `NAMING_CONVENTION` — проверено
+  напрямую (`Account.__table__.constraints`, `Category.__table__`,
+  `Transaction.__table__` дают `ck_accounts_type_allowed`,
+  `ck_categories_no_self_parent`, `ck_transactions_transfer_shape` и
+  т. д.). Расхождение — только между `Base.metadata` (используется как
+  `target_metadata` для Alembic, согласно докстрингу
+  `models/__init__.py`) и тем, что реально создаёт написанная вручную
+  миграция. Последствие: реальные имена ограничений в БД не совпадают с
+  тем, что ожидает документ и `target_metadata`; любая ручная команда
+  или будущая миграция, ссылающаяся на документированное имя (например
+  `DROP CONSTRAINT ck_accounts_type_allowed`), упадёт «constraint does
+  not exist», а `alembic check`/автогенерация, если когда-нибудь
+  включится (докстринг `models/__init__.py` называет это одной из целей
+  общей `Base.metadata`), будет видеть постоянный дрейф по каждому
+  `CHECK` этих трёх таблиц.
+- Находок уровня «замечание» нет.
+- Находок уровня «к документу» нет: правки `docs/architecture.md` в
+  разделах 3.3, 4.3, 4.5 и таблице переменных окружения (10.1)
+  согласованы с кодом миграций, моделей и `config.py` — сверено построчно
+  с `git diff e3aad34..540d38c -- docs/architecture.md`.
+- Остальное по списку «что искать» — без находок: денежные столбцы
+  везде `numeric(20,4)`/`numeric(18,10)`, `float` не встречается (проверено
+  `grep`); первичные ключи, `timestamptz`, `user_id` в каждой
+  пользовательской таблице, `ON DELETE` у FK, частичные и обычные
+  индексы совпадают с разделом 4.3 столбец в столбец; роли, привилегии,
+  политики RLS, `FORCE` не включён (что и требуется, иначе ломает
+  `SECURITY DEFINER`), функция `find_user_by_telegram_id` с фиксированным
+  `search_path` и `REVOKE ALL … FROM PUBLIC` — дословно по разделу 4.5;
+  `downgrade` обеих миграций симметричен `upgrade` и не оставляет
+  политик/функций/ролей, мешающих повторному `upgrade head`;
+  `migrations/env.py` и `config.py` подключаются к БД через
+  `migrations_dsn()` (роль `finplan`), не смешивая её с `DATABASE_URL`
+  приложения — соответствует 10.4 и 4.5. Направление зависимостей и
+  импорты в моделях чистые (только SQLAlchemy и `finplan.infrastructure.db.base`).
+- Чего не хватает: прогон миграций (`alembic upgrade head` /
+  `downgrade`) и интеграционных тестов схемы (`uv run pytest` по
+  `tests/integration`) — находка про имена `CheckConstraint` выведена из
+  статического рендера DDL (`CreateTable(...).compile(...)`), а не из
+  реального применения к PostgreSQL; фактический прогон — работа
+  `tester`, и стоит также проверить, не завязаны ли уже написанные тесты
+  подзадачи 10a/10c на короткие имена ограничений (тогда их придётся
+  поправить вместе с миграцией).
+
+**Решения и отложенное.** Известные и заведомо не находки (открытый
+вопрос кросс-валютного перевода в 3.3, локальный `.env` под владельцем
+схемы, отсутствие `mypy` для `tests/` в `make lint`) не включены в
+список — они уже названы диспетчером как учтённые. Не стал заводить
+отдельную находку про `GRANT USAGE ON ALL SEQUENCES IN SCHEMA public`
+(в схеме этапа 1 нет ни одной таблицы с `serial`/`bigserial` — все PK
+`uuid`, генерируются приложением): это буквально требование раздела 4.5
+(«USAGE на последовательности» в таблице ролей), а не самодеятельность
+миграции, поэтому не вкусовщина и не нарушение — просто пока не на что
+опереться, но код прав по документу.
+
+**Вопросы диспетчеру.** Нет.
+
+## Решение диспетчера
+
+Находка «нарушение» про имена CHECK-ограничений отклонена как ложная.
+В работающей базе, поднятой `make migrate`, запрос к `pg_constraint`
+показывает полные имена: `ck_accounts_name_length`,
+`ck_categories_no_self_parent`, `ck_transactions_transfer_shape`,
+`ck_transactions_category_required` и остальные. Alembic в
+`op.create_table` строит `MetaData` с `naming_convention` из
+`target_metadata`, который `migrations/env.py` берёт из `Base.metadata`;
+статический рендер DDL в ревью шёл без контекста миграции, поэтому
+показал короткие имена. Правок не требуется.

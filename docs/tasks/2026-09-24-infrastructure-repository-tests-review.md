@@ -131,4 +131,121 @@ git diff e3aad34..540d38c -- tests/unit
 
 ## Результат исполнителя
 
-_Заполняет исполнитель. Выше этой строки ничего не меняется._
+**Сделано.** Прочитан весь дифф подзадачи 11c (`e3aad34..540d38c`,
+~1290 строк): `tests/conftest.py`, `tests/integration/test_migrations.py`,
+`tests/integration/repositories/conftest.py` и все четыре файла
+`tests/integration/repositories/test_*.py`, `tests/unit/domain/test_category.py`,
+`tests/unit/domain/test_transaction.py`, `tests/unit/application/conftest.py` и
+`test_record_transaction.py`. Продуктовый код `src/finplan/infrastructure/db/`
+прочитан точечно для контекста (репозиторий `transactions.py` — чтобы понять,
+что `mark_reversed` не создаёт сторнирующую запись, только меняет `status`).
+Найдено 2 находки уровня «нарушение» и 1 уровня «замечание»; уровня «к
+документу» — нет.
+
+**Проверка.**
+
+1. **Нарушение** — `tests/unit/domain/test_transaction.py:223-241`,
+   `tests/integration/repositories/test_transactions.py:133-171`,
+   `tests/unit/application/test_record_transaction.py:72-104`. Правило
+   раздела 3.3 «`occurred_on` вычисляет `Transaction.new` из `occurred_at` и
+   таймзоны» и явное требование задания 11c «`occurred_on` проверен на
+   переходе через полночь в таймзоне, отличной от UTC, в обе стороны от
+   UTC» не выполнены: во всех трёх местах, где `occurred_on` тестируется
+   (домен, use case, репозиторий), используется одна и та же пара часовых
+   поясов — `Europe/Moscow` (UTC+3) и `UTC` (0). Ни одного теста с
+   отрицательным смещением (например, `America/New_York`, где локальная
+   дата на переходе через полночь UTC оказывается *раньше* даты в UTC, а не
+   позже) в дифф не попало. Последствие: код, который вычисляет
+   `occurred_on` через `astimezone()`/`timedelta`, может содержать ошибку
+   знака смещения — все три уровня тестов её не поймают, потому что
+   проверяют движение календарной даты только в одну сторону.
+2. **Нарушение** — `tests/integration/repositories/test_transactions.py:55`
+   (класс `TestTransactionRepository`, для сравнения — аналогичный тест на
+   соседний уникальный ключ на строке 102,
+   `test_duplicate_external_key_raises`). Раздел 4.3, таблица
+   `transactions`: `CONSTRAINT uq_transactions_reverses_id UNIQUE
+   (reverses_id) -- одну операцию нельзя сторнировать дважды` — второй
+   уникальный ключ этой таблицы, отдельный от
+   `uq_transactions_user_id_external_key`. Задание 11c прямо требует
+   «`DuplicateError` на каждом уникальном ключе раздела 4.3». Тест на
+   `uq_transactions_user_id_external_key` есть
+   (`test_duplicate_external_key_raises`, строка 102), тест на
+   `uq_transactions_reverses_id` отсутствует: ни один тест не вставляет
+   вторую операцию с тем же `reverses_id`, что и уже существующая
+   сторнирующая запись, и не проверяет `DuplicateError`. Последствие: если
+   реализация `add()` в `SqlAlchemyTransactionRepository` (или сама
+   миграция) потеряет это ограничение, регресс не будет пойман репозиторными
+   тестами — только `test_alembic_check_matches_sqlalchemy_metadata`
+   заметил бы расхождение метаданных, но не поведение при попытке двойного
+   сторно через `add()`.
+3. **Замечание** — DB-триггер `trg_transactions_immutable` (раздел 4.2,
+   «Переход `posted` → `reversed` — единственное допустимое изменение...
+   остальные поля не меняются никогда») нигде не тестируется — ни в этом
+   диффе, ни в остальном дереве `tests/` (проверено `grep -rln
+   "trg_transactions_immutable\|immutable" tests/`, единственное
+   совпадение — не по теме, в `tests/unit/domain/test_user.py`). Текущий
+   код репозитория никогда не пытается изменить что-либо, кроме `status`
+   (`mark_reversed`), поэтому дефект в этом тесте прямо сейчас не проявится;
+   риск в том, что будущий сценарий (например, правка комментария операции
+   или импорт задним числом на этапе 2–3) может по ошибке выполнить `UPDATE`
+   поверх других столбцов, и без прямого теста триггера это не будет
+   поймано ни одним существующим тестом. Формально это скорее относится к
+   ревью схемы/миграций (задача 11a), а не к файлам, ревьюируемым здесь, —
+   называю как замечание на будущее, не как находку по 11c, поскольку среди
+   файлов из `git diff --stat` этой задачи нет места, где такой тест должен
+   был появиться.
+
+   Остальное по списку «что искать» — без находок. Фикстуры: `app_connection`
+   в `tests/integration/repositories/conftest.py` работает под ролью
+   `finplan_app` (через `app_database_url` из `tests/conftest.py`), внешняя
+   транзакция только откатывается (`outer_transaction.rollback()` в
+   `finally`), `app.user_id` не протекает между тестами — фикстура
+   `app_connection` не имеет области видимости шире функции. Общий connection
+   для «владельца» и «соседа» внутри одного теста — учтённое и объяснённое в
+   докстринге `conftest.py:10-52` решение, повторно не отмечаю. Тест
+   миграций (`tests/integration/test_migrations.py`) реально прогоняет
+   `upgrade head` → `downgrade base` → `upgrade head` на чистой базе и
+   проверяет состав таблиц на каждом шаге, а не только отсутствие
+   исключения; `TestRowLevelSecurityUnderAppRole` (строка 101) функционально
+   доказывает, что `finplan_app` подчиняется RLS (прямой `SELECT` из `users`
+   пуст без `app.user_id`, чужие счета не видны) — отдельной проверки
+   «роль не владеет таблицами» через `pg_tables`/`has_table_privilege` нет,
+   но она избыточна: если бы `finplan_app` владела таблицами, RLS не
+   действовала бы и оба теста класса упали бы. Контракт `UnitOfWork`
+   (откат без `commit`, запрет повторного `commit`, откат при исключении)
+   покрыт в `tests/integration/repositories/test_users.py:109-146`.
+   `DuplicateError` проверен на `uq_users_telegram_id`, частичном
+   `uq_accounts_user_id_name` (регистронезависимо), `uq_categories_user_id_path`
+   (в том числе конфликт между `expense` и `income` с одинаковым слагом —
+   верно по 3.3, `path` уникален для обоих видов вместе) и
+   `uq_transactions_user_id_external_key`. Сторнирующая запись копирует
+   дату исходной — покрыто в `tests/unit/domain/test_transaction.py:267-292`
+   (`test_reversal_copies_original_and_is_created_as_reversed`). `float` в
+   диффе не встречается (проверено `grep` по всем изменённым файлам).
+   Тестов, проходящих при любом поведении кода, не найдено.
+
+   Прогон тестов и линтеров не выполнялся: по границам задачи это не
+   требуется, диспетчер уже сообщил результат на `540d38c` (210 passed,
+   `make lint` зелёный). Обе находки уровня «нарушение» — это отсутствие
+   тестов, а не падение существующих; чтобы их закрыть, нужен не прогон, а
+   добавление тестов и последующий прогон `uv run pytest -q` для
+   подтверждения.
+
+**Решения и отложенное.** Не стал искать находки за пределами списка файлов
+из `git diff --stat` первой команды задания (`tests/integration/repositories/
+test_tenant_isolation.py` и `tests/integration/repositories/
+test_ledger_queries.py` — предмет 11d, не читал их содержимое, только
+`grep` по ним для контекста мимоходом при поиске `mark_reversed`).
+Триггер `trg_transactions_immutable` вынесен как замечание, а не как
+находка «нарушение», из-за границы задачи 11c — этот выбор описан в пункте 3
+выше и не отправляется отдельным вопросом, потому что не требует решения
+диспетчера, только фиксации на будущее (например, при заведении 11a или
+следующей задачи на тесты миграций).
+
+**Вопросы диспетчеру.** Нет.
+
+## Решение диспетчера
+
+Оба нарушения и замечание про триггер `trg_transactions_immutable`
+приняты и переданы в подзадачу 11e
+(`docs/tasks/2026-09-24-infrastructure-review-tests.md`).

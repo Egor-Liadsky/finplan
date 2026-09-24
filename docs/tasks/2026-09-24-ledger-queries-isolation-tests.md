@@ -10,7 +10,7 @@
 Вторая из двух частей подзадачи 10 плана
 `docs/tasks/2026-09-23-stage1-plan.md`. Запускается только после того,
 как закрыта первая часть,
-`docs/tasks/2026-09-24-repositories-integration-tests.md`: там заведены
+`docs/tasks/done/2026-09-24-repositories-integration-tests.md`: там заведены
 фикстуры `tests/integration/repositories/conftest.py` — сессия и
 фабрика Unit of Work под ролью `finplan_app` с откатом после теста — и
 описано, как устранена утечка `app.user_id` между пользователями одной

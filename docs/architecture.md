@@ -656,7 +656,8 @@ currency: Currency)`. Никогда `float`. В базе — `NUMERIC(20, 4)`.
 | `account_id` | `UUID` | Счёт-источник для `expense`/`transfer`, счёт-получатель для `income` |
 | `counter_account_id` | `UUID \| None` | Обязателен и только для `transfer` |
 | `category_id` | `UUID \| None` | Обязателен для `income` и `expense`, запрещён для `transfer` |
-| `occurred_at` | `datetime` | Момент операции в UTC; дата в таймзоне пользователя выводится на лету |
+| `occurred_at` | `datetime` | Момент операции в UTC, с таймзоной |
+| `occurred_on` | `date` | Календарная дата `occurred_at` в таймзоне пользователя; вычисляется один раз при создании и не пересчитывается |
 | `comment` | `str \| None` | До 500 символов |
 | `base_amount` | `Decimal` | Снимок пересчёта в базовую валюту |
 | `base_currency` | `Currency` | Базовая валюта на момент операции |
@@ -676,8 +677,9 @@ currency: Currency)`. Никогда `float`. В базе — `NUMERIC(20, 4)`.
   получает `status = reversed`) плюс новая операция. Обоснование —
   **ADR-004**.
 - Форма сторно. Сторнирующая запись повторяет `kind`, `amount`,
-  `account_id`, `counter_account_id`, `category_id`, `occurred_at` и
-  снимок `base_*` исходной, получает `reverses_id` = `id` исходной,
+  `account_id`, `counter_account_id`, `category_id`, `occurred_at`,
+  `occurred_on` и снимок `base_*` исходной, получает `reverses_id` =
+  `id` исходной,
   собственный `created_at` и сразу `status = reversed`. Исходная
   переходит из `posted` в `reversed`. Так пара целиком выпадает из
   агрегатов, которые считают только `status = posted`, и ни один запрос
@@ -704,6 +706,15 @@ currency: Currency)`. Никогда `float`. В базе — `NUMERIC(20, 4)`.
   переводов между валютами на этапе 2, вместе с правкой 5.7.
 - `occurred_at` не может быть более чем на 1 день в будущем для
   `status = posted`; будущие операции создаются со `status = pending`.
+- `occurred_on` вычисляет `Transaction.new` из `occurred_at` и
+  таймзоны, которую передаёт `application` как `tzinfo`, разобрав
+  `User.timezone`: так дата фиксируется в момент записи, а репозиторий
+  о таймзонах не знает. Смена `User.timezone` позже прежние даты не
+  меняет — журнал неизменяем. Сторнирующая запись копирует
+  `occurred_on` исходной вместе с `occurred_at`. Отвергнутый вариант —
+  вычислять дату в репозитории по `User.timezone`: тогда
+  инфраструктура получает правило предметной области и лишний запрос
+  пользователя на каждую запись.
 
 #### Budget
 

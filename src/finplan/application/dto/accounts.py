@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -20,6 +21,7 @@ class AccountDTO(Dto):
     name: str
     type: AccountType
     currency: str
+    opened_on: date
     is_archived: bool
 
     @classmethod
@@ -30,6 +32,7 @@ class AccountDTO(Dto):
             name=account.name,
             type=account.type,
             currency=account.currency.code,
+            opened_on=account.opened_at,
             is_archived=account.is_archived,
         )
 

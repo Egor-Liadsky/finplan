@@ -5,12 +5,17 @@
 «Сегодня» и «Этот месяц». Переходы между уровнями меню — `nav:<пункт>`
 (`nav:menu`, `nav:add`, `nav:acc`, `nav:rep`), конечные кнопки — префиксы
 роутеров, которые их обрабатывают (`exp:new`, `inc:new`, `acc:balance`,
-`rep:today`, `rep:month`); эти роутеры пока пустые (подзадачи 13, 14) —
-`CallbackData`-классы для их кнопок временно определены здесь же, рядом с
-клавиатурой, которая их рисует.
+`rep:today`, `rep:month`); `accounts.router` и `reports.router` пока пустые
+(подзадача 14) — `CallbackData`-классы для их кнопок временно определены
+здесь же, рядом с клавиатурой, которая их рисует.
 
 Кнопка «‹ Назад» в подменю и подписи пунктов меню документ не задаёт
 дословно — это решения исполнителя, см. результат задачи.
+
+`ExpenseCallback` и `IncomeCallback` переехали в `keyboards/ledger.py`
+(подзадача 13a): диалоги расхода и дохода используют их же поля `action`,
+`id`, `page`, а не только `action`, которого было довольно для одной
+кнопки `exp:new` / `inc:new`.
 """
 
 from __future__ import annotations
@@ -19,23 +24,28 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+from finplan.entrypoints.bot.keyboards.ledger import ExpenseCallback, IncomeCallback
+
+__all__ = [
+    "REPLY_ADD_TEXT",
+    "REPLY_MENU_TEXT",
+    "AccountsCallback",
+    "ExpenseCallback",
+    "IncomeCallback",
+    "NavCallback",
+    "ReportsCallback",
+    "accounts_menu_keyboard",
+    "add_menu_keyboard",
+    "main_menu_keyboard",
+    "reply_keyboard",
+    "reports_menu_keyboard",
+]
+
 
 class NavCallback(CallbackData, prefix="nav"):
     """`nav:<target>` — переход между уровнями меню, раздел 6.7."""
 
     target: str
-
-
-class ExpenseCallback(CallbackData, prefix="exp"):
-    """`exp:<action>` — кнопки роутера `expense` (подзадача 13)."""
-
-    action: str
-
-
-class IncomeCallback(CallbackData, prefix="inc"):
-    """`inc:<action>` — кнопки роутера `income` (подзадача 13)."""
-
-    action: str
 
 
 class AccountsCallback(CallbackData, prefix="acc"):

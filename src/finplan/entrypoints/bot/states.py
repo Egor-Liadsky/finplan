@@ -22,6 +22,7 @@ class AddIncome(StatesGroup):
     amount = State()
     category = State()
     account = State()
+    comment = State()
     recurring = State()  # предложить сделать регулярным
     confirm = State()
 

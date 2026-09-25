@@ -50,8 +50,9 @@ os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 # настоящие секреты; `TELEGRAM_BOT_TOKEN` — тот же, что уже используется как
 # рабочая заглушка в `.env.example` (раздел «Решение 3» задачи
 # `2026-09-22-stage0-logging-12-1-fixes.md`): `changeme` не проходит
-# локальную проверку формата токена в aiogram и `Bot()` падает уже при
-# импорте `finplan.entrypoints.bot.main`.
+# локальную проверку формата токена в aiogram, а `create_bot()`
+# (`infrastructure/telegram/bot.py`) и интеграционные тесты хендлеров
+# (подзадача 15b) строят настоящий `Bot`.
 _BASELINE_ENV: dict[str, str] = {
     "APP_ENV": "local",
     "APP_BASE_URL": "http://localhost:8000",
@@ -61,14 +62,15 @@ _BASELINE_ENV: dict[str, str] = {
     "CORS_ORIGINS": "http://localhost:5173",
 }
 
-# Несколько модулей (`entrypoints/api/app.py`, `entrypoints/bot/main.py`)
-# строят объекты уровня модуля (`app = create_app()`, `bot = Bot(...)`) при
-# самом импорте — то есть ещё при сборе тестов, до того как успеет
+# `entrypoints/api/app.py` строит объект уровня модуля (`app = create_app()`)
+# при самом импорте — то есть ещё при сборе тестов, до того как успеет
 # отработать любая фикстура. `Settings()` обязана собраться уже в этот
 # момент, поэтому безопасные значения по умолчанию выставляются здесь же,
 # на уровне модуля `conftest.py`, который pytest импортирует раньше любого
 # файла тестов. `setdefault` не трогает переменные, которые пользователь или
-# CI уже определили сами.
+# CI уже определили сами. `entrypoints/bot/main.py` таких объектов не
+# строит: `create_dispatcher` — чистая фабрика, а `Bot()` создаётся только
+# внутри `main()`, которую тесты не вызывают.
 for _key, _value in _BASELINE_ENV.items():
     os.environ.setdefault(_key, _value)
 

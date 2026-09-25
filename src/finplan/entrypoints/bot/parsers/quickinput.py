@@ -122,6 +122,28 @@ def parse_quick_input(text: str, *, today: date) -> QuickInput:
     )
 
 
+def parse_amount(text: str) -> Decimal:
+    """Разбирает сумму без знака, валюты и комментария — вся строка одна сумма.
+
+    Тот же синтаксис суммы, что в `parse_quick_input` (раздел 6.5: разделитель
+    `.` или `,`, пробелы-разделители тысяч, суффиксы `k`/`к`), и те же
+    проверки диапазона с теми же кодами `QuickInputError`. Использует шаг
+    `opening_balance` онбординга (раздел 6.3) и шаг суммы диалогов расхода и
+    дохода.
+    """
+    stripped = text.strip()
+    match = _AMOUNT_RE.match(stripped)
+    has_sign_or_currency = match is not None and (
+        match.group("sign") or match.group("presym") or match.group("postsym")
+    )
+    if match is None or match.end() != len(stripped) or has_sign_or_currency:
+        raise QuickInputError(QuickInputErrorCode.INVALID_AMOUNT)
+    amount = _parse_amount(match)
+    if not (Decimal(0) < amount < _AMOUNT_UPPER_BOUND):
+        raise QuickInputError(QuickInputErrorCode.AMOUNT_OUT_OF_RANGE)
+    return amount
+
+
 def _parse_amount(match: re.Match[str]) -> Decimal:
     int_part = match.group("int").replace(" ", "")
     frac_part = match.group("frac")

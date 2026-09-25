@@ -78,3 +78,23 @@ def error_message(exc: Exception) -> str:
 def warning_message(code: str) -> str:
     """Текст предупреждения по коду `BotWarning`."""
     return _WARNING_MESSAGES[BotWarning(code)]
+
+
+class BotInputError(StrEnum):
+    """Коды ошибок ввода, которые парсер строки не покрывает.
+
+    `UNKNOWN_TIMEZONE` — шаг `Onboarding.timezone` (раздел 6.3): имя IANA,
+    присланное текстом, не найдено в `zoneinfo.available_timezones()`.
+    """
+
+    UNKNOWN_TIMEZONE = "unknown_timezone"
+
+
+_INPUT_ERROR_MESSAGES: dict[BotInputError, str] = {
+    BotInputError.UNKNOWN_TIMEZONE: "Не знаю такую таймзону. Пример: Europe/Moscow",
+}
+
+
+def input_error_message(code: BotInputError) -> str:
+    """Текст ошибки ввода по коду `BotInputError`."""
+    return _INPUT_ERROR_MESSAGES[code]

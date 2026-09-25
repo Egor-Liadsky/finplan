@@ -1843,7 +1843,7 @@ NAV(d) = Σ_по счетам с include_in_networth:
 
 | Роутер | Фильтры | Содержимое |
 |---|---|---|
-| `start.router` | `CommandStart()`, `Command('help')` | Онбординг, привязка `telegram_id` → `users` |
+| `start.router` | `CommandStart()`, `Command('help')`, `Command('cancel')` в `StateFilter(Onboarding)`, `F.data.startswith('onb:')` | Онбординг, привязка `telegram_id` → `users`, отмена онбординга |
 | `common.router` | `Command('cancel')`, `Command('menu')`, `F.data.startswith('nav:')`, тексты кнопок reply-клавиатуры | Отмена состояния, главное меню, обработка `nav:*` |
 | `undo.router` | `Command('undo')` | Сторно последней операции, введённой в боте |
 | `expense.router` | `Command('expense')`, `F.data.startswith('exp:')`, `StateFilter(AddExpense)` | Диалог расхода |

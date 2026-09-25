@@ -10,7 +10,7 @@ revision:
 	uv run alembic revision --autogenerate -m "$(m)"
 
 seed:
-	@echo "not implemented yet: stage 1"
+	@echo "not implemented yet: stage 2"
 
 test:
 	uv run pytest
@@ -25,4 +25,4 @@ lint:
 	uv run mypy src
 
 recalc:
-	@echo "not implemented yet: stage 1"
+	@echo "not implemented yet: stage 3"

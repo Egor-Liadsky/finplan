@@ -1,4 +1,9 @@
-"""Хендлер `/start` — раздел `docs/architecture.md`, 13 «Этап 0» и 11.3.
+"""Роутер `start` без базы: `/help` — раздел `docs/architecture.md`, 6.2 и 11.3.
+
+`/start` с этапа 1 обращается к базе через `Container` и проверяется
+интеграционными тестами хендлеров на PostgreSQL. Здесь остаётся `/help`,
+которому база не нужна: он проверяет, что роутер подключается к `Dispatcher`
+и отвечает через подменённую `BaseSession`.
 
 Раздел 11.3 называет `aiogram.test_utils.mocked_bot.MockedBot` как
 инструмент. Установленная в проекте версия `aiogram` (3.31.0) этот модуль не
@@ -69,8 +74,8 @@ class FakeSession(BaseSession):
         yield b""
 
 
-def _make_start_update(bot: Bot, chat_id: int = 100500) -> Update:
-    """Апдейт с сообщением `/start` от приватного чата, привязанный к `bot`."""
+def _make_help_update(bot: Bot, chat_id: int = 100500) -> Update:
+    """Апдейт с сообщением `/help` от приватного чата, привязанный к `bot`."""
     chat = Chat(id=chat_id, type="private")
     sender = User(id=chat_id, is_bot=False, first_name="Тестовый пользователь")
     message: TelegramObject = Message(
@@ -78,7 +83,7 @@ def _make_start_update(bot: Bot, chat_id: int = 100500) -> Update:
         date=datetime.now(tz=UTC),
         chat=chat,
         from_user=sender,
-        text="/start",
+        text="/help",
     ).as_(bot)
     return Update(update_id=1, message=message)  # type: ignore[arg-type]
 
@@ -107,14 +112,14 @@ async def test_start_router_is_registered(dispatcher: Dispatcher) -> None:
     assert [router.name for router in dispatcher.sub_routers] == ["start"]
 
 
-async def test_start_command_sends_non_empty_reply(dispatcher: Dispatcher, fake_bot: Bot) -> None:
-    update = _make_start_update(fake_bot)
+async def test_help_command_sends_non_empty_reply(dispatcher: Dispatcher, fake_bot: Bot) -> None:
+    update = _make_help_update(fake_bot)
 
     await dispatcher.feed_update(fake_bot, update)
 
     session = fake_bot.session
     assert isinstance(session, FakeSession)
     sent_messages = [request for request in session.requests if isinstance(request, SendMessage)]
-    assert len(sent_messages) == 1, "хендлер /start обязан отправить ровно один ответ"
+    assert len(sent_messages) == 1, "хендлер /help обязан отправить ровно один ответ"
     assert sent_messages[0].text.strip() != ""
     assert sent_messages[0].chat_id == 100500

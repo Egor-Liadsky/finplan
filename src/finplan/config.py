@@ -74,11 +74,16 @@ class DatabaseSettings(_SectionSettings):
     max_overflow: int = Field(default=5, validation_alias="DATABASE_MAX_OVERFLOW")
     echo: bool = Field(default=False, validation_alias="DATABASE_ECHO")
     worker_url: SecretStr | None = Field(default=None, validation_alias="WORKER_DATABASE_URL")
+    migrations_url: SecretStr | None = Field(
+        default=None, validation_alias="MIGRATIONS_DATABASE_URL"
+    )
 
     @model_validator(mode="after")
-    def _default_worker_url(self) -> DatabaseSettings:
+    def _default_urls(self) -> DatabaseSettings:
         if self.worker_url is None:
             self.worker_url = self.url
+        if self.migrations_url is None:
+            self.migrations_url = self.url
         return self
 
     def dsn(self) -> str:
@@ -89,6 +94,11 @@ class DatabaseSettings(_SectionSettings):
         """Строка подключения к БД для роли ``worker`` (с ``BYPASSRLS``)."""
         assert self.worker_url is not None
         return self.worker_url.get_secret_value()
+
+    def migrations_dsn(self) -> str:
+        """Строка подключения владельца схемы для Alembic (роль ``finplan``, 4.5)."""
+        assert self.migrations_url is not None
+        return self.migrations_url.get_secret_value()
 
 
 class TelegramSettings(_SectionSettings):

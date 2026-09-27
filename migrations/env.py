@@ -41,7 +41,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Режим offline: рендерит SQL в вывод без подключения к БД."""
     context.configure(
-        url=get_settings().database.dsn(),
+        url=get_settings().database.migrations_dsn(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -60,8 +60,14 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Режим online: создаёт async engine из ``Settings`` и подключается к БД."""
-    connectable: AsyncEngine = create_engine(get_settings().database)
+    """Режим online: создаёт async engine из ``Settings`` и подключается к БД.
+
+    Подключение идёт строкой ``migrations_dsn()`` (роль ``finplan``, владелец
+    схемы) — не основной ``DATABASE_URL`` (роль ``finplan_app`` без
+    ``BYPASSRLS``), у которой после этой миграции не будет прав на `DDL`
+    и `GRANT`/`ALTER DEFAULT PRIVILEGES` (раздел 4.5).
+    """
+    connectable: AsyncEngine = create_engine(get_settings().database.migrations_dsn())
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
